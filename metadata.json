@@ -1,0 +1,8 @@
+{
+  "name": "نظام طلبات وإدارة المطعم",
+  "description": "نظام ويب تجاري احترافي لإدارة ومطالعة قوائم الوجبات للمطاعم مع هوية قابلة للتخصيص ولوحة إدارة متقدمة",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

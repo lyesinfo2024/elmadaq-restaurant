@@ -1,0 +1,291 @@
+// Prisma Schema مهيأ بالكامل للسوق الجزائري
+// يدعم العملة بالدينار الجزائري (DZD)، التقسيم الإداري الجزائري (الولاية، الدائرة، البلدية)،
+// ومناطق التوصيل والدفع عند الاستلام.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// 1. الأدوار والمستخدمين (Roles & Users)
+// ==========================================
+
+enum Role {
+  ADMIN       // صاحب المطعم / المسير العام
+  MANAGER     // مشرف الصالة والمطبخ
+  DELIVERY    // عامل / كابتن التوصيل
+  CUSTOMER    // زبون مسجل
+}
+
+model User {
+  id              String          @id @default(uuid())
+  restaurantId    String?         // دعم تعدد المطاعم مستقبلاً (Multi-Tenant)
+  restaurant      Restaurant?     @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  
+  name            String          // الاسم واللقب
+  email           String          @unique
+  passwordHash    String          // تشفير bcrypt لكلمات المرور
+  phone           String?         // رقم الهاتف الجزائري (مثال: 0550123456 / 0661123456 / 0770123456)
+  role            Role            @default(CUSTOMER)
+  isActive        Boolean         @default(true)
+  
+  orders          Order[]
+  deliveryProfile DeliveryPerson?
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([restaurantId])
+  @@index([email])
+}
+
+// ==========================================
+// 2. المطعم والإعدادات المركزية (Restaurant)
+// ==========================================
+
+model Restaurant {
+  id              String            @id @default(uuid())
+  name            String            // اسم المطعم الجزائري
+  slug            String            @unique
+  description     String?           // وصف المطعم
+  logoUrl         String?           // رابط الشعار
+  coverImageUrl   String?           // رابط صورة الواجهة
+  phone           String            // رقم الهاتف الجزائري للاتصال والطلبات
+  email           String?           // البريد الإلكتروني للمطعم
+  
+  // العنوان الجزائري
+  wilaya          String            @default("الجزائر العاصمة") // الولاية
+  commune         String            @default("سيدي امحمد")      // البلدية
+  address         String            // العنوان التفصيلي (الشارع والحي)
+  
+  // العملة والماليات (بالدينار الجزائري الصحيح بدون كسور)
+  currency        String            @default("دج")     // رمز العرض: دج
+  currencyCode    String            @default("DZD")    // الكود الدولي: DZD
+  isOpen          Boolean           @default(true)     // حالة فتح/إغلاق المطعم
+  openingHours    String?           // مواعيد العمل بتوقيت الجزائر
+  timezone        String            @default("Africa/Algiers") // توقيت الجزائر الرسمي
+  
+  defaultDeliveryFee Int            @default(300)      // سعر التوصيل الافتراضي بالدينار (300 دج)
+  minOrderAmount     Int            @default(800)      // الحد الأدنى للطلب بالدينار (800 دج)
+  
+  users           User[]
+  categories      Category[]
+  products        Product[]
+  orders          Order[]
+  deliveryStaff   DeliveryPerson[]
+  deliveryZones   DeliveryZone[]
+
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+}
+
+// ==========================================
+// 3. مناطق وأسعار التوصيل في الجزائر (Delivery Zones)
+// ==========================================
+
+model DeliveryZone {
+  id              String        @id @default(uuid())
+  restaurantId    String
+  restaurant      Restaurant    @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  wilaya          String        // الولاية (مثال: الجزائر العاصمة، البليدة، وهران)
+  wilayaCode      String?       // رمز الولاية (16، 09، 31...)
+  commune         String        // البلدية (مثال: القبة، حيدرة، باب الزوار، بئر مراد رايس)
+  deliveryFee     Int           // سعر التوصيل بالدينار الجزائري الصحيح (مثال: 300 دج)
+  estimatedMinutes Int          @default(45) // الوقت التقديري للتوصيل بالدقائق
+  minOrderAmount  Int           @default(600) // الحد الأدنى للطلب لهذه المنطقة بالدينار الجزائري
+  isActive        Boolean       @default(true) // فعالة لاستقبال الطلبات
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([restaurantId])
+  @@index([wilaya, commune])
+}
+
+// ==========================================
+// 4. التصنيفات (Categories)
+// ==========================================
+
+model Category {
+  id              String        @id @default(uuid())
+  restaurantId    String
+  restaurant      Restaurant    @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  name            String        // اسم التصنيف (مثال: شاورما، أطباق تقليدية، برغر، بيتزا)
+  description     String?       // وصف التصنيف
+  imageUrl        String?       // صورة للتصنيف
+  icon            String?       // أيقونة إيموجي (🍔، 🍕، 🍲)
+  displayOrder    Int           @default(0)
+  isActive        Boolean       @default(true)
+
+  products        Product[]
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([restaurantId])
+  @@index([displayOrder])
+}
+
+// ==========================================
+// 5. المنتجات والوجبات (Products)
+// ==========================================
+
+model Product {
+  id                     String        @id @default(uuid())
+  restaurantId           String
+  restaurant             Restaurant    @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  
+  categoryId             String
+  category               Category      @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  name                   String        // اسم الوجبة
+  description            String        // وصف المكونات
+  price                  Int           // السعر بالدينار الجزائري كعدد صحيح (Integer) منعاً للكسور (مثال: 650 دج)
+  imageUrl               String        // رابط صورة عالية الدقة
+  isAvailable            Boolean       @default(true) // متوفر حالياً
+  isFeatured             Boolean       @default(false) // وجبة مميزة
+  displayOrder           Int           @default(0)
+  preparationTimeMinutes Int?          @default(20)
+  calories               Int?
+  tags                   String?       // وسوم (حار، تقليدي، الأكثر طلباً، عائلي)
+
+  orderItems             OrderItem[]
+
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+
+  @@index([restaurantId])
+  @@index([categoryId])
+  @@index([isAvailable])
+}
+
+// ==========================================
+// 6. الطلبات ونظام الدفع الجزائري (Orders)
+// ==========================================
+
+enum OrderStatus {
+  NEW                 // جديد / تم استلام الطلب
+  CONFIRMED           // تم تأكيد الطلب
+  PREPARING           // قيد التحضير
+  READY               // جاهز للتسليم / التوصيل
+  OUT_FOR_DELIVERY    // خرج للتوصيل
+  DELIVERED           // تم التوصيل بنجاح
+  CANCELLED           // ملغي
+}
+
+enum OrderType {
+  DELIVERY            // توصيل للمنزل
+  TAKEAWAY            // استلام من المطعم (إمبورتي / à emporter)
+  DINE_IN             // تناول في عين المكان (محلي)
+}
+
+enum PaymentMethod {
+  CASH_ON_DELIVERY    // الدفع عند الاستلام (الخيار الأساسي في الجزائر)
+  BARIDIMOB           // بريدي موب (مستقبلاً)
+  EDAHABIA            // البطاقة الذهبية CIB (مستقبلاً)
+}
+
+enum PaymentStatus {
+  UNPAID              // غير مدفوع (يدفع عند الاستلام)
+  PAID                // تم الدفع
+}
+
+model Order {
+  id                  String          @id @default(uuid())
+  orderNumber         String          @unique // رقم الطلب (مثال: #DZ-2026-1001)
+  
+  restaurantId        String
+  restaurant          Restaurant      @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  customerId          String?
+  customer            User?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  status              OrderStatus     @default(NEW)
+  orderType           OrderType       @default(DELIVERY)
+  paymentMethod       PaymentMethod   @default(CASH_ON_DELIVERY)
+  paymentStatus       PaymentStatus   @default(UNPAID)
+
+  // المبالغ المالية بالدينار الجزائري كأعداد صحيحة
+  subtotal            Int             // مجموع أسعار الوجبات بالدينار
+  deliveryFee         Int             @default(0) // سعر التوصيل بالدينار
+  total               Int             // المجموع الإجمالي بالدينار المستحق عند الاستلام
+
+  // بيانات الزبون وعنوان التوصيل الجزائري
+  customerName        String          // الاسم واللقب
+  customerPhone       String          // رقم الهاتف الجزائري (05/06/07XXXXXXXX)
+  wilaya              String          // الولاية
+  commune             String          // البلدية
+  daira               String?         // الدائرة
+  neighborhood        String          // الحي / المنطقة
+  address             String          // العنوان التفصيلي (الشارع، رقم العمارة، الطابق، رقم الباب)
+  deliveryAddress     String?         // توافق مع الحقل السابق
+  notes               String?         // ملاحظات خاصة بالتوصيل
+
+  deliveryPersonId    String?
+  deliveryPerson      DeliveryPerson? @relation(fields: [deliveryPersonId], references: [id], onDelete: SetNull)
+
+  items               OrderItem[]
+
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  @@index([restaurantId])
+  @@index([status])
+  @@index([customerPhone])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id          String    @id @default(uuid())
+  orderId     String
+  order       Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  productId   String?
+  product     Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  productName String    // حفظ اسم الوجبة وقت الطلب
+  unitPrice   Int       // سعر الوحدة بالدينار الجزائري
+  quantity    Int       @default(1)
+  totalPrice  Int       // unitPrice * quantity
+  notes       String?   // ملاحظات الوجبة (بدون بصل، حار، إلخ)
+
+  createdAt   DateTime  @default(now())
+
+  @@index([orderId])
+}
+
+// ==========================================
+// 7. عمال التوصيل في الجزائر (Delivery Person)
+// ==========================================
+
+model DeliveryPerson {
+  id                 String      @id @default(uuid())
+  restaurantId       String
+  restaurant         Restaurant  @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  userId             String      @unique
+  user               User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name               String      // اسم عامل التوصيل
+  phone              String      // رقم هاتف عامل التوصيل
+  isActive           Boolean     @default(true) // حالة تفعيل حساب عامل التوصيل
+  vehicleType        String?     // دراجة نارية (Moto)، سيارة
+  vehiclePlateNumber String?     // ترقيم المركبة الجزائري (مثال: 00123-116-16)
+  isAvailable        Boolean     @default(true) // متاح للطلبات الحالية
+  currentLatitude    Float?
+  currentLongitude   Float?
+
+  assignedOrders     Order[]
+
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  @@index([restaurantId])
+}
