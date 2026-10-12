@@ -473,6 +473,7 @@ export const INITIAL_USERS_RAW = [
     restaurantId: 'rest-dz-001',
     name: 'أمين بن علي',
     email: 'admin@elbahdja.dz',
+    username: 'admin',
     passwordPlain: 'Admin@123456',
     phone: '0550123456',
     role: 'ADMIN' as Role,
@@ -483,62 +484,14 @@ export const INITIAL_USERS_RAW = [
     restaurantId: 'rest-dz-001',
     name: 'ياسمين بلقاسم',
     email: 'manager@elbahdja.dz',
+    username: 'manager',
     passwordPlain: 'Manager@123456',
     phone: '0661234567',
     role: 'MANAGER' as Role,
     isActive: true,
   },
-  {
-    id: 'usr-del-dz-01',
-    restaurantId: 'rest-dz-001',
-    name: 'كريم دراجي',
-    email: 'delivery@elbahdja.dz',
-    passwordPlain: 'Delivery@123456',
-    phone: '0770345678',
-    role: 'DELIVERY' as Role,
-    isActive: true,
-  },
-  {
-    id: 'usr-del-dz-02',
-    restaurantId: 'rest-dz-001',
-    name: 'سمير بوزيد',
-    email: 'samir.delivery@elbahdja.dz',
-    passwordPlain: 'Delivery@123456',
-    phone: '0552789123',
-    role: 'DELIVERY' as Role,
-    isActive: true,
-  },
 ];
 
-export const INITIAL_DELIVERY_PEOPLE = [
-  {
-    id: 'dp-01',
-    restaurantId: 'rest-dz-001',
-    userId: 'usr-del-dz-01',
-    name: 'كريم دراجي',
-    phone: '0770345678',
-    email: 'delivery@elbahdja.dz',
-    isActive: true,
-    isAvailable: true,
-    deliveryFeePerOrder: 100, // 100 دج لكل طلب
-    vehicleType: 'دراجة نارية (Moto SYM)',
-    vehiclePlateNumber: '16-45892-001',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'dp-02',
-    restaurantId: 'rest-dz-001',
-    userId: 'usr-del-dz-02',
-    name: 'سمير بوزيد',
-    phone: '0552789123',
-    email: 'samir.delivery@elbahdja.dz',
-    isActive: true,
-    isAvailable: true,
-    deliveryFeePerOrder: 100, // 100 دج لكل طلب
-    vehicleType: 'سيارة (Renault Clio)',
-    vehiclePlateNumber: '16-78214-002',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
+// مسؤولو التوصيل: فارغ في البيئة النظيفة للاختبار الحقيقي (يتم إنشاؤهم من لوحة الإدارة)
+export const INITIAL_DELIVERY_PEOPLE: any[] = [];
+

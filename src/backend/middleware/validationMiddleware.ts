@@ -15,12 +15,13 @@ export function isValidAlgerianPhone(phone: string): boolean {
 }
 
 export function validateLogin(req: Request, res: Response, next: NextFunction) {
-  const { email, password } = req.body;
+  const { email, username, identifier, password } = req.body;
+  const loginId = (identifier || email || username || '').trim();
 
-  if (!email || typeof email !== 'string' || !email.includes('@')) {
+  if (!loginId || typeof loginId !== 'string' || loginId.length < 3) {
     return res.status(400).json({
       success: false,
-      error: 'يرجى إدخال بريد إلكتروني صحيح',
+      error: 'يرجى إدخال اسم المستخدم أو البريد الإلكتروني بشكل صحيح',
     });
   }
 

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { dbStore } from '../db/index.ts';
+import { FinancePeriod } from '../types/index.ts';
 
 // GET /api/admin/delivery-staff - جلب قائمة عمال التوصيل مع الإحصائيات
 export async function getAllDeliveryStaff(_req: Request, res: Response) {
@@ -46,22 +47,25 @@ export async function getDeliveryStaffById(req: Request, res: Response) {
 // POST /api/admin/delivery-staff - إنشاء مندوب توصيل جديد
 export async function createDeliveryStaff(req: Request, res: Response) {
   try {
-    const { name, email, password, phone, vehicleType, vehiclePlateNumber } = req.body;
+    const { name, email, username, password, phone, vehicleType, vehiclePlateNumber, deliveryFeePerOrder } = req.body;
+    const loginIdentifier = (email || username || '').trim();
 
-    if (!name || !email || !password || !phone) {
+    if (!name || !loginIdentifier || !password || !phone) {
       return res.status(400).json({
         success: false,
-        error: 'يرجى ملء جميع البيانات المطلوبة: اسم المندوب، البريد الإلكتروني، كلمة المرور، ورقم الهاتف الجزائري',
+        error: 'يرجى ملء جميع البيانات المطلوبة: اسم المندوب، اسم المستخدم أو البريد الإلكتروني، كلمة المرور، ورقم الهاتف الجزائري',
       });
     }
 
     const newStaff = await dbStore.createDeliveryPerson({
       name,
-      email,
+      email: loginIdentifier,
+      username: (username || loginIdentifier).trim(),
       password,
       phone,
       vehicleType: vehicleType?.trim() || 'توصيل',
       vehiclePlateNumber: vehiclePlateNumber?.trim() || undefined,
+      deliveryFeePerOrder,
     });
 
     return res.status(201).json({
@@ -116,6 +120,25 @@ export async function toggleDeliveryStaffStatus(req: Request, res: Response) {
   }
 }
 
+// DELETE /api/admin/delivery-staff/:id - حذف وتعطيل حساب مسؤول التوصيل
+export async function deleteDeliveryStaff(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const deleted = dbStore.deleteDeliveryPerson(id);
+    return res.json({
+      success: true,
+      message: 'تم حذف وتعطيل حساب مسؤول التوصيل بنجاح',
+      data: deleted,
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'فشل في حذف مسؤول التوصيل';
+    return res.status(400).json({
+      success: false,
+      error: message,
+    });
+  }
+}
+
 // PUT /api/admin/orders/:id/assign - إسناد طلب لعامل توصيل أو إلغاء الإسناد
 export async function assignOrderToStaff(req: Request, res: Response) {
   try {
@@ -140,10 +163,15 @@ export async function assignOrderToStaff(req: Request, res: Response) {
   }
 }
 
-// GET /api/admin/delivery-staff/dues/summary - تقرير ملخص مستحقات التوصيل
-export async function getCourierDuesSummary(_req: Request, res: Response) {
+// GET /api/admin/delivery-staff/dues/summary - تقرير ملخص مستحقات التوصيل والمداخيل
+export async function getCourierDuesSummary(req: Request, res: Response) {
   try {
-    const summary = dbStore.getCourierDuesSummary();
+    const { period, startDate, endDate } = req.query;
+    const summary = dbStore.getCourierDuesSummary(
+      (period as FinancePeriod) || 'today',
+      startDate as string | undefined,
+      endDate as string | undefined
+    );
     return res.json({
       success: true,
       data: summary,

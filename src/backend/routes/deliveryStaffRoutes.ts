@@ -5,6 +5,7 @@ import {
   createDeliveryStaff,
   updateDeliveryStaff,
   toggleDeliveryStaffStatus,
+  deleteDeliveryStaff,
   getCourierDuesSummary,
   recordCourierPayout,
 } from '../controllers/deliveryStaffController.ts';
@@ -30,6 +31,9 @@ router.post('/', createDeliveryStaff);
 
 // PUT /api/admin/delivery-staff/:id - تعديل بيانات عامل التوصيل
 router.put('/:id', updateDeliveryStaff);
+
+// DELETE /api/admin/delivery-staff/:id - حذف وتعطيل حساب عامل التوصيل
+router.delete('/:id', deleteDeliveryStaff);
 
 // PATCH /api/admin/delivery-staff/:id/toggle-status - تفعيل أو تعطيل حساب العامل
 router.patch('/:id/toggle-status', toggleDeliveryStaffStatus);

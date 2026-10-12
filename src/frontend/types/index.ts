@@ -199,6 +199,8 @@ export interface CourierDueItem {
   deliveryPersonName: string;
   phone: string;
   feePerOrder: number;
+  periodDeliveredCount?: number; // عدد الطلبات المسلمة في الفترة المختارة
+  periodEarned?: number;         // إجمالي المستحق في الفترة المختارة
   todayDeliveredCount: number;  // عدد الطلبات المسلمة اليوم
   totalDeliveredCount: number;
   unpaidDeliveredCount: number;
@@ -212,6 +214,8 @@ export interface CourierDuesSummary {
   period?: FinancePeriod;
   startDate?: string;
   endDate?: string;
+  totalOrdersCount?: number;     // إجمالي الطلبات في الفترة
+  totalRevenue?: number;         // مجموع المداخيل: مجموع قيمة الطلبات المكتملة فقط
   todayDeliveredCount: number;
   todayDeliveryDues: number;
   deliveredOrdersCount: number;
@@ -220,6 +224,7 @@ export interface CourierDuesSummary {
   paidDues: number;
   couriers: CourierDueItem[];
   recentPayouts: CourierPayout[];
+  deliveredOrders?: Order[];     // قائمة الطلبات المكتملة في الفترة
 }
 
 export interface MyCourierDues {
@@ -253,6 +258,7 @@ export interface MyCourierDues {
 export interface CreateDeliveryPersonInput {
   name: string;
   email: string;
+  username?: string;
   password: string;
   phone: string;
   vehicleType?: string;
@@ -295,6 +301,7 @@ export interface SafeUser {
   id: string;
   name: string;
   email: string;
+  username?: string;
   phone?: string;
   role: Role;
   restaurantId?: string;

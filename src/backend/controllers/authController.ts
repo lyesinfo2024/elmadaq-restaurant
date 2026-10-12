@@ -5,8 +5,17 @@ import { generateToken, AuthenticatedRequest } from '../middleware/authMiddlewar
 
 export async function login(req: Request, res: Response) {
   try {
-    const { email, password } = req.body;
-    const user = dbStore.getUserByEmail(email);
+    const { email, username, identifier, password } = req.body;
+    const loginId = (identifier || email || username || '').trim();
+
+    if (!loginId || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'يرجى إدخال اسم المستخدم أو البريد الإلكتروني وكلمة المرور',
+      });
+    }
+
+    const user = dbStore.getUserByEmailOrUsername(loginId);
 
     if (!user) {
       return res.status(401).json({

@@ -43,3 +43,37 @@ export async function getCategoryById(req: Request, res: Response) {
     });
   }
 }
+
+export async function createCategory(req: Request, res: Response) {
+  try {
+    const { name, description, icon, imageUrl, displayOrder, isActive } = req.body;
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'اسم التصنيف مطلوب',
+      });
+    }
+
+    const newCategory = dbStore.createCategory({
+      name,
+      description,
+      icon,
+      imageUrl,
+      displayOrder: displayOrder !== undefined ? Number(displayOrder) : undefined,
+      isActive: isActive !== undefined ? Boolean(isActive) : true,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'تم إنشاء التصنيف بنجاح',
+      data: newCategory,
+    });
+  } catch (error) {
+    console.error('createCategory error:', error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'فشل في إنشاء التصنيف',
+    });
+  }
+}
+

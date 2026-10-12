@@ -46,27 +46,27 @@ function RestaurantApp() {
   const [isTrackerOpen, setIsTrackerOpen] = useState(false);
 
   // Fetch categories and products from REST API
-  useEffect(() => {
-    async function loadMenuData() {
-      try {
-        setLoadingMenu(true);
-        setMenuError(null);
+  const loadMenuData = async () => {
+    try {
+      setLoadingMenu(true);
+      setMenuError(null);
 
-        const [cats, prods] = await Promise.all([
-          api.getCategories(),
-          api.getProducts({ all: true }),
-        ]);
+      const [cats, prods] = await Promise.all([
+        api.getCategories(),
+        api.getProducts({ all: true }),
+      ]);
 
-        setCategories(cats);
-        setProducts(prods);
-      } catch (err: unknown) {
-        console.error('Failed to load menu data:', err);
-        setMenuError(err instanceof Error ? err.message : 'فشل في تحميل قائمة الوجبات');
-      } finally {
-        setLoadingMenu(false);
-      }
+      setCategories(cats);
+      setProducts(prods);
+    } catch (err: unknown) {
+      console.error('Failed to load menu data:', err);
+      setMenuError(err instanceof Error ? err.message : 'فشل في تحميل قائمة الوجبات');
+    } finally {
+      setLoadingMenu(false);
     }
+  };
 
+  useEffect(() => {
     loadMenuData();
   }, []);
 
@@ -391,6 +391,7 @@ function RestaurantApp() {
           categories={categories}
           products={products}
           onClose={() => setIsDashboardOpen(false)}
+          onMenuUpdated={loadMenuData}
         />
       )}
 

@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+import { DatabaseSync } from 'node:sqlite';
 import bcrypt from 'bcryptjs';
 import {
   Restaurant,
@@ -18,6 +21,7 @@ import {
   CourierDuesSummary,
   MyCourierDues,
   CourierDueItem,
+  FinancePeriod,
 } from '../types/index.ts';
 import {
   INITIAL_RESTAURANT,
@@ -25,367 +29,718 @@ import {
   INITIAL_PRODUCTS,
   INITIAL_DELIVERY_ZONES,
   INITIAL_USERS_RAW,
-  INITIAL_DELIVERY_PEOPLE,
 } from './seedData.ts';
 import { isValidAlgerianPhone } from '../middleware/validationMiddleware.ts';
 
-class DatabaseStore {
-  private restaurant: Restaurant = { ...INITIAL_RESTAURANT };
-  private categories: Category[] = [...INITIAL_CATEGORIES];
-  private products: Product[] = [...INITIAL_PRODUCTS];
-  private deliveryZones: DeliveryZone[] = [...INITIAL_DELIVERY_ZONES];
-  private users: User[] = [];
-  private deliveryPeople: DeliveryPerson[] = [...INITIAL_DELIVERY_PEOPLE];
-  private orders: Order[] = [];
-  private courierPayouts: CourierPayout[] = [];
-  private orderCounter = 1000;
+// File path for the permanent SQLite database
+const DB_DIR = path.resolve(process.cwd(), 'data');
+const DB_FILE = path.join(DB_DIR, 'restaurant.sqlite');
+
+export class SQLiteDatabaseStore {
+  private db!: DatabaseSync;
   private idempotencyCache = new Map<string, { order: Order; timestamp: number }>();
   private isInitialized = false;
 
-  async init() {
-    if (this.isInitialized) return;
-
-    // Hash passwords for initial seed users with bcrypt
-    this.users = await Promise.all(
-      INITIAL_USERS_RAW.map(async (u) => {
-        const passwordHash = await bcrypt.hash(u.passwordPlain, 10);
-        return {
-          id: u.id,
-          restaurantId: u.restaurantId,
-          name: u.name,
-          email: u.email,
-          passwordHash,
-          phone: u.phone,
-          role: u.role,
-          isActive: u.isActive,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-      })
-    );
-
-    // Initial Seed Orders for demo and testing
-    this.orderCounter = 1002;
-    const initialOrder1: Order = {
-      id: 'ord-seed-1001',
-      orderNumber: '#1001',
-      restaurantId: 'rest-dz-001',
-      status: 'CONFIRMED',
-      orderType: 'DELIVERY',
-      paymentMethod: 'CASH_ON_DELIVERY',
-      paymentStatus: 'UNPAID',
-      subtotal: 1200,
-      deliveryFee: 250,
-      total: 1450,
-      customerName: 'كريم بن ناصر',
-      customerPhone: '0555123456',
-      wilaya: 'الجزائر العاصمة',
-      commune: 'القصبة',
-      daira: 'باب الواد',
-      neighborhood: 'حي الشهداء',
-      address: 'شارع العربي بن مهيدي، العمارة 4، الطابق 2، شقة 5',
-      deliveryAddress: 'شارع العربي بن مهيدي، العمارة 4، الطابق 2، شقة 5',
-      notes: 'يرجى الاتصال بي عند الوصول للباب الخارجي',
-      deliveryPersonId: 'dp-01',
-      deliveryPerson: {
-        id: 'dp-01',
-        name: 'كريم دراجي',
-        phone: '0770345678',
-        vehicleType: 'دراجة نارية (Moto SYM)',
-        vehiclePlateNumber: '16-45892-001',
-        isAvailable: true,
-      },
-      items: [
-        {
-          id: 'item-1001-1',
-          orderId: 'ord-seed-1001',
-          productId: 'prod-dz-01',
-          productName: 'سندويتش شاورما دجاج جامبو بالخبز السوري',
-          unitPrice: 450,
-          quantity: 2,
-          totalPrice: 900,
-          notes: 'زيادة صلصة حارة',
-          createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-        },
-        {
-          id: 'item-1001-2',
-          orderId: 'ord-seed-1001',
-          productId: 'prod-dz-13',
-          productName: 'سلطة حميس عاصمي حار مشوي بزيت الزيتون',
-          unitPrice: 300,
-          quantity: 1,
-          totalPrice: 300,
-          createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-        },
-      ],
-      createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-      updatedAt: new Date(Date.now() - 3600000).toISOString(),
-    };
-
-    const initialOrder2: Order = {
-      id: 'ord-seed-1002',
-      orderNumber: '#1002',
-      restaurantId: 'rest-dz-001',
-      status: 'PREPARING',
-      orderType: 'DELIVERY',
-      paymentMethod: 'CASH_ON_DELIVERY',
-      paymentStatus: 'UNPAID',
-      subtotal: 1850,
-      deliveryFee: 300,
-      total: 2150,
-      customerName: 'فاطمة الزهراء بوجمعة',
-      customerPhone: '0662987654',
-      wilaya: 'الجزائر العاصمة',
-      commune: 'حيدرة',
-      daira: 'بئر مراد رايس',
-      neighborhood: 'حي بارادو',
-      address: 'شارع سيدي يحيى، إقامة الورود، العمارة ب، شقة 14',
-      deliveryAddress: 'شارع سيدي يحيى، إقامة الورود، العمارة ب، شقة 14',
-      notes: 'بدون بصل في الطاكوس رجاءً',
-      items: [
-        {
-          id: 'item-1002-1',
-          orderId: 'ord-seed-1002',
-          productId: 'prod-dz-04',
-          productName: 'طبق ميكس مشاوي البهجة الملكي على الفحم',
-          unitPrice: 1200,
-          quantity: 1,
-          totalPrice: 1200,
-          createdAt: new Date(Date.now() - 1800000).toISOString(),
-        },
-        {
-          id: 'item-1002-2',
-          orderId: 'ord-seed-1002',
-          productId: 'prod-dz-07',
-          productName: 'طاكوس جزائري دبل ماكسي بلحم مفروم ودجاج',
-          unitPrice: 650,
-          quantity: 1,
-          totalPrice: 650,
-          notes: 'بدون بصل',
-          createdAt: new Date(Date.now() - 1800000).toISOString(),
-        },
-      ],
-      createdAt: new Date(Date.now() - 1800000).toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    const driverSummary1: DeliveryPersonSummary = {
-      id: 'dp-01',
-      name: 'كريم دراجي',
-      phone: '0770345678',
-      vehicleType: 'دراجة نارية (Moto SYM)',
-      vehiclePlateNumber: '16-45892-001',
-      isAvailable: true,
-    };
-
-    // Delivered Today Order (#1003) - Assigned to Karim Derradji (Unpaid)
-    const initialOrder3: Order = {
-      id: 'ord-seed-1003',
-      orderNumber: '#1003',
-      restaurantId: 'rest-dz-001',
-      status: 'DELIVERED',
-      orderType: 'DELIVERY',
-      paymentMethod: 'CASH_ON_DELIVERY',
-      paymentStatus: 'PAID',
-      subtotal: 1350,
-      deliveryFee: 200,
-      total: 1550,
-      customerName: 'جمال عبد النور',
-      customerPhone: '0770123987',
-      wilaya: 'الجزائر العاصمة',
-      commune: 'سيدي امحمد',
-      daira: 'سيدي امحمد',
-      neighborhood: 'نهج موريتانيا',
-      address: 'عمارة 8، الطابق الثالث',
-      deliveryPersonId: 'dp-01',
-      deliveryPerson: driverSummary1,
-      courierPaid: false,
-      courierFeeAtDelivery: 100,
-      deliveredAt: new Date(Date.now() - 3600000 * 3).toISOString(),
-      items: [
-        {
-          id: 'item-1003-1',
-          orderId: 'ord-seed-1003',
-          productId: 'prod-dz-02',
-          productName: 'سندويتش شاورما دجاج بخبز الصاج العاصمي',
-          unitPrice: 450,
-          quantity: 3,
-          totalPrice: 1350,
-          createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-        },
-      ],
-      createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-      updatedAt: new Date(Date.now() - 3600000 * 3).toISOString(),
-    };
-
-    // Delivered Yesterday Order (#1004) - Assigned to Karim Derradji (Paid payout)
-    const yesterdayDate = new Date(Date.now() - 86400000);
-    const initialOrder4: Order = {
-      id: 'ord-seed-1004',
-      orderNumber: '#1004',
-      restaurantId: 'rest-dz-001',
-      status: 'DELIVERED',
-      orderType: 'DELIVERY',
-      paymentMethod: 'CASH_ON_DELIVERY',
-      paymentStatus: 'PAID',
-      subtotal: 1800,
-      deliveryFee: 300,
-      total: 2100,
-      customerName: 'سفيان مرابط',
-      customerPhone: '0550998877',
-      wilaya: 'الجزائر العاصمة',
-      commune: 'المرادية',
-      daira: 'سيدي امحمد',
-      neighborhood: 'حي ديار المحصول',
-      address: 'شارع فلسطين، فيلا رقم 12',
-      deliveryPersonId: 'dp-01',
-      deliveryPerson: driverSummary1,
-      courierPaid: true,
-      courierPayoutId: 'pay-seed-01',
-      courierFeeAtDelivery: 100,
-      deliveredAt: yesterdayDate.toISOString(),
-      items: [
-        {
-          id: 'item-1004-1',
-          orderId: 'ord-seed-1004',
-          productId: 'prod-dz-01',
-          productName: 'سندويتش شاورما دجاج جزائرية مع بطاطا وصلصة ثومية',
-          unitPrice: 450,
-          quantity: 4,
-          totalPrice: 1800,
-          createdAt: yesterdayDate.toISOString(),
-        },
-      ],
-      createdAt: yesterdayDate.toISOString(),
-      updatedAt: yesterdayDate.toISOString(),
-    };
-
-    this.courierPayouts = [
-      {
-        id: 'pay-seed-01',
-        restaurantId: 'rest-dz-001',
-        deliveryPersonId: 'dp-01',
-        deliveryPersonName: 'كريم دراجي',
-        ordersCount: 1,
-        orderIds: ['ord-seed-1004'],
-        amount: 100,
-        feePerOrder: 100,
-        status: 'PAID',
-        paidAt: yesterdayDate.toISOString(),
-        notes: 'تسوية مستحقات يوم أمس',
-        createdAt: yesterdayDate.toISOString(),
-      },
-    ];
-
-    this.orders = [initialOrder3, initialOrder2, initialOrder1, initialOrder4];
-    this.orderCounter = 1004;
-
-    this.isInitialized = true;
-    console.log('[DatabaseStore] Initialized successfully with Phase 2 Order & Management features.');
+  constructor() {
+    // Ensure directory exists with secure permissions
+    if (!fs.existsSync(DB_DIR)) {
+      fs.mkdirSync(DB_DIR, { recursive: true, mode: 0o700 });
+    }
   }
 
-  // Restaurant queries
+  async init(): Promise<void> {
+    if (this.isInitialized) return;
+
+    // Connect to SQLite file
+    this.db = new DatabaseSync(DB_FILE);
+
+    // Enable WAL mode for high performance & safe concurrency, and foreign keys
+    this.db.exec('PRAGMA journal_mode = WAL;');
+    this.db.exec('PRAGMA foreign_keys = ON;');
+    this.db.exec('PRAGMA synchronous = NORMAL;');
+
+    // 1. Create tables
+    this.createTables();
+
+    // 2. Seed initial essential data if table is empty
+    await this.seedInitialDataIfEmpty();
+
+    this.isInitialized = true;
+    console.log(`[SQLiteDatabaseStore] Connected to persistent SQLite database at: ${DB_FILE}`);
+  }
+
+  private createTables(): void {
+    this.db.exec(`
+      -- 1. Restaurant Settings
+      CREATE TABLE IF NOT EXISTS restaurant (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        description TEXT,
+        logo_url TEXT,
+        cover_image_url TEXT,
+        phone TEXT NOT NULL,
+        email TEXT,
+        wilaya TEXT NOT NULL,
+        commune TEXT NOT NULL,
+        address TEXT NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'دج',
+        currency_code TEXT NOT NULL DEFAULT 'DZD',
+        is_open INTEGER NOT NULL DEFAULT 1,
+        opening_hours TEXT,
+        timezone TEXT NOT NULL DEFAULT 'Africa/Algiers',
+        default_delivery_fee INTEGER NOT NULL DEFAULT 300,
+        min_order_amount INTEGER NOT NULL DEFAULT 800,
+        default_courier_fee_per_order INTEGER DEFAULT 100,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      -- 2. Delivery Zones
+      CREATE TABLE IF NOT EXISTS delivery_zones (
+        id TEXT PRIMARY KEY,
+        restaurant_id TEXT NOT NULL,
+        wilaya TEXT NOT NULL,
+        wilaya_code TEXT,
+        commune TEXT NOT NULL,
+        delivery_fee INTEGER NOT NULL,
+        estimated_minutes INTEGER NOT NULL,
+        min_order_amount INTEGER NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      -- 3. Categories
+      CREATE TABLE IF NOT EXISTS categories (
+        id TEXT PRIMARY KEY,
+        restaurant_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        image_url TEXT,
+        icon TEXT,
+        display_order INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      -- 4. Products
+      CREATE TABLE IF NOT EXISTS products (
+        id TEXT PRIMARY KEY,
+        restaurant_id TEXT NOT NULL,
+        category_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        price INTEGER NOT NULL,
+        image_url TEXT NOT NULL,
+        is_available INTEGER NOT NULL DEFAULT 1,
+        is_featured INTEGER NOT NULL DEFAULT 0,
+        display_order INTEGER NOT NULL DEFAULT 0,
+        preparation_time_minutes INTEGER,
+        calories INTEGER,
+        tags TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (category_id) REFERENCES categories (id) ON DELETE CASCADE
+      );
+
+      -- 5. Users
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        restaurant_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        phone TEXT,
+        role TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      -- 6. Delivery People
+      CREATE TABLE IF NOT EXISTS delivery_people (
+        id TEXT PRIMARY KEY,
+        restaurant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        email TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        is_available INTEGER NOT NULL DEFAULT 1,
+        delivery_fee_per_order INTEGER NOT NULL DEFAULT 100,
+        vehicle_type TEXT DEFAULT 'توصيل',
+        vehicle_plate_number TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+      );
+
+      -- 7. Orders
+      CREATE TABLE IF NOT EXISTS orders (
+        id TEXT PRIMARY KEY,
+        order_number TEXT NOT NULL UNIQUE,
+        restaurant_id TEXT NOT NULL,
+        customer_id TEXT,
+        status TEXT NOT NULL,
+        order_type TEXT NOT NULL DEFAULT 'DELIVERY',
+        payment_method TEXT NOT NULL,
+        payment_status TEXT NOT NULL,
+        subtotal INTEGER NOT NULL,
+        delivery_fee INTEGER NOT NULL,
+        total INTEGER NOT NULL,
+        customer_name TEXT NOT NULL,
+        customer_phone TEXT NOT NULL,
+        wilaya TEXT NOT NULL,
+        daira TEXT,
+        commune TEXT NOT NULL,
+        neighborhood TEXT NOT NULL,
+        address TEXT NOT NULL,
+        delivery_address TEXT,
+        notes TEXT,
+        delivery_person_id TEXT,
+        cancellation_reason TEXT,
+        delivered_at TEXT,
+        courier_paid INTEGER NOT NULL DEFAULT 0,
+        courier_payout_id TEXT,
+        courier_fee_at_delivery INTEGER,
+        idempotency_key TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (delivery_person_id) REFERENCES delivery_people (id) ON DELETE SET NULL
+      );
+
+      -- 8. Order Items
+      CREATE TABLE IF NOT EXISTS order_items (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        product_id TEXT,
+        product_name TEXT NOT NULL,
+        unit_price INTEGER NOT NULL,
+        quantity INTEGER NOT NULL,
+        total_price INTEGER NOT NULL,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE CASCADE
+      );
+
+      -- 9. Courier Payouts
+      CREATE TABLE IF NOT EXISTS courier_payouts (
+        id TEXT PRIMARY KEY,
+        restaurant_id TEXT NOT NULL,
+        delivery_person_id TEXT NOT NULL,
+        delivery_person_name TEXT NOT NULL,
+        orders_count INTEGER NOT NULL,
+        order_ids_json TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        fee_per_order INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PAID',
+        paid_at TEXT NOT NULL,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (delivery_person_id) REFERENCES delivery_people (id) ON DELETE CASCADE
+      );
+
+      -- 10. Operational Indexes
+      CREATE INDEX IF NOT EXISTS idx_orders_status ON orders (status);
+      CREATE INDEX IF NOT EXISTS idx_orders_delivery_person ON orders (delivery_person_id);
+      CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders (created_at);
+      CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items (order_id);
+      CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+      CREATE INDEX IF NOT EXISTS idx_users_username ON users (username);
+      CREATE INDEX IF NOT EXISTS idx_products_category ON products (category_id);
+      CREATE INDEX IF NOT EXISTS idx_payouts_driver ON courier_payouts (delivery_person_id);
+    `);
+  }
+
+  private async seedInitialDataIfEmpty(): Promise<void> {
+    // 1. Restaurant
+    const restRow = this.db.prepare('SELECT id FROM restaurant LIMIT 1').get();
+    if (!restRow) {
+      const stmt = this.db.prepare(`
+        INSERT INTO restaurant (
+          id, name, slug, description, logo_url, cover_image_url,
+          phone, email, wilaya, commune, address, currency, currency_code,
+          is_open, opening_hours, timezone, default_delivery_fee, min_order_amount,
+          default_courier_fee_per_order, created_at, updated_at
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?
+        )
+      `);
+      stmt.run(
+        INITIAL_RESTAURANT.id,
+        INITIAL_RESTAURANT.name,
+        INITIAL_RESTAURANT.slug,
+        INITIAL_RESTAURANT.description || null,
+        INITIAL_RESTAURANT.logoUrl || null,
+        INITIAL_RESTAURANT.coverImageUrl || null,
+        INITIAL_RESTAURANT.phone,
+        INITIAL_RESTAURANT.email || null,
+        INITIAL_RESTAURANT.wilaya,
+        INITIAL_RESTAURANT.commune,
+        INITIAL_RESTAURANT.address,
+        INITIAL_RESTAURANT.currency,
+        INITIAL_RESTAURANT.currencyCode,
+        INITIAL_RESTAURANT.isOpen ? 1 : 0,
+        INITIAL_RESTAURANT.openingHours || null,
+        INITIAL_RESTAURANT.timezone,
+        INITIAL_RESTAURANT.defaultDeliveryFee,
+        INITIAL_RESTAURANT.minOrderAmount,
+        INITIAL_RESTAURANT.defaultCourierFeePerOrder ?? 100,
+        INITIAL_RESTAURANT.createdAt,
+        INITIAL_RESTAURANT.updatedAt
+      );
+    }
+
+    // 2. Delivery Zones
+    const zonesCount = (this.db.prepare('SELECT COUNT(*) as count FROM delivery_zones').get() as any).count;
+    if (zonesCount === 0) {
+      const stmt = this.db.prepare(`
+        INSERT INTO delivery_zones (
+          id, restaurant_id, wilaya, wilaya_code, commune,
+          delivery_fee, estimated_minutes, min_order_amount, is_active,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const z of INITIAL_DELIVERY_ZONES) {
+        stmt.run(
+          z.id,
+          z.restaurantId,
+          z.wilaya,
+          z.wilayaCode || null,
+          z.commune,
+          z.deliveryFee,
+          z.estimatedMinutes,
+          z.minOrderAmount,
+          z.isActive ? 1 : 0,
+          z.createdAt,
+          z.updatedAt
+        );
+      }
+    }
+
+    // 3. Categories
+    const catCount = (this.db.prepare('SELECT COUNT(*) as count FROM categories').get() as any).count;
+    if (catCount === 0) {
+      const stmt = this.db.prepare(`
+        INSERT INTO categories (
+          id, restaurant_id, name, description, image_url, icon,
+          display_order, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const c of INITIAL_CATEGORIES) {
+        stmt.run(
+          c.id,
+          c.restaurantId,
+          c.name,
+          c.description || null,
+          c.imageUrl || null,
+          c.icon || null,
+          c.displayOrder,
+          c.isActive ? 1 : 0,
+          c.createdAt,
+          c.updatedAt
+        );
+      }
+    }
+
+    // 4. Products
+    const prodCount = (this.db.prepare('SELECT COUNT(*) as count FROM products').get() as any).count;
+    if (prodCount === 0) {
+      const stmt = this.db.prepare(`
+        INSERT INTO products (
+          id, restaurant_id, category_id, name, description, price,
+          image_url, is_available, is_featured, display_order,
+          preparation_time_minutes, calories, tags, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const p of INITIAL_PRODUCTS) {
+        stmt.run(
+          p.id,
+          p.restaurantId,
+          p.categoryId,
+          p.name,
+          p.description,
+          p.price,
+          p.imageUrl,
+          p.isAvailable ? 1 : 0,
+          p.isFeatured ? 1 : 0,
+          p.displayOrder,
+          p.preparationTimeMinutes ?? null,
+          p.calories ?? null,
+          p.tags || null,
+          p.createdAt,
+          p.updatedAt
+        );
+      }
+    }
+
+    // 5. Admin & Manager Users (only if not already created!)
+    const userCount = (this.db.prepare('SELECT COUNT(*) as count FROM users').get() as any).count;
+    if (userCount === 0) {
+      const stmt = this.db.prepare(`
+        INSERT INTO users (
+          id, restaurant_id, name, email, username, password_hash,
+          phone, role, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const now = new Date().toISOString();
+      for (const u of INITIAL_USERS_RAW) {
+        const passwordHash = await bcrypt.hash(u.passwordPlain, 10);
+        stmt.run(
+          u.id,
+          u.restaurantId,
+          u.name,
+          u.email,
+          u.username || u.email.split('@')[0],
+          passwordHash,
+          u.phone || null,
+          u.role,
+          u.isActive ? 1 : 0,
+          now,
+          now
+        );
+      }
+    }
+  }
+
+  // ==========================================
+  // Restaurant Queries
+  // ==========================================
+
   getRestaurant(): Restaurant {
-    return { ...this.restaurant };
+    const row = this.db.prepare('SELECT * FROM restaurant LIMIT 1').get() as any;
+    if (!row) throw new Error('بيانات المطعم غير مهيأة');
+    return this.mapRestaurant(row);
   }
 
   updateRestaurant(data: Partial<Restaurant>): Restaurant {
-    this.restaurant = {
-      ...this.restaurant,
+    const current = this.getRestaurant();
+    const updated: Restaurant = {
+      ...current,
       ...data,
       updatedAt: new Date().toISOString(),
     };
-    return { ...this.restaurant };
+
+    const stmt = this.db.prepare(`
+      UPDATE restaurant SET
+        name = ?,
+        slug = ?,
+        description = ?,
+        logo_url = ?,
+        cover_image_url = ?,
+        phone = ?,
+        email = ?,
+        wilaya = ?,
+        commune = ?,
+        address = ?,
+        currency = ?,
+        currency_code = ?,
+        is_open = ?,
+        opening_hours = ?,
+        timezone = ?,
+        default_delivery_fee = ?,
+        min_order_amount = ?,
+        default_courier_fee_per_order = ?,
+        updated_at = ?
+      WHERE id = ?
+    `);
+
+    stmt.run(
+      updated.name,
+      updated.slug,
+      updated.description || null,
+      updated.logoUrl || null,
+      updated.coverImageUrl || null,
+      updated.phone,
+      updated.email || null,
+      updated.wilaya,
+      updated.commune,
+      updated.address,
+      updated.currency,
+      updated.currencyCode,
+      updated.isOpen ? 1 : 0,
+      updated.openingHours || null,
+      updated.timezone,
+      updated.defaultDeliveryFee,
+      updated.minOrderAmount,
+      updated.defaultCourierFeePerOrder ?? 100,
+      updated.updatedAt,
+      updated.id
+    );
+
+    return updated;
   }
 
-  // Delivery Zones
+  // ==========================================
+  // Delivery Zones Queries
+  // ==========================================
+
   getDeliveryZones(onlyActive = true): DeliveryZone[] {
-    let zones = [...this.deliveryZones];
-    if (onlyActive) {
-      zones = zones.filter((z) => z.isActive);
-    }
-    return zones.sort((a, b) => a.deliveryFee - b.deliveryFee);
+    const sql = onlyActive
+      ? 'SELECT * FROM delivery_zones WHERE is_active = 1 ORDER BY delivery_fee ASC'
+      : 'SELECT * FROM delivery_zones ORDER BY delivery_fee ASC';
+    const rows = this.db.prepare(sql).all() as any[];
+    return rows.map(this.mapDeliveryZone);
   }
 
   getDeliveryZoneById(id: string): DeliveryZone | null {
-    const zone = this.deliveryZones.find((z) => z.id === id);
-    return zone ? { ...zone } : null;
+    const row = this.db.prepare('SELECT * FROM delivery_zones WHERE id = ?').get(id) as any;
+    return row ? this.mapDeliveryZone(row) : null;
   }
 
-  // Category queries
+  // ==========================================
+  // Category Queries & Management
+  // ==========================================
+
   getCategories(onlyActive = true): Category[] {
-    let list = [...this.categories];
-    if (onlyActive) {
-      list = list.filter((c) => c.isActive);
-    }
-    return list.sort((a, b) => a.displayOrder - b.displayOrder);
+    const sql = onlyActive
+      ? 'SELECT * FROM categories WHERE is_active = 1 ORDER BY display_order ASC'
+      : 'SELECT * FROM categories ORDER BY display_order ASC';
+    const rows = this.db.prepare(sql).all() as any[];
+    return rows.map(this.mapCategory);
   }
 
   getCategoryById(id: string): Category | null {
-    const cat = this.categories.find((c) => c.id === id);
-    return cat ? { ...cat } : null;
+    const row = this.db.prepare('SELECT * FROM categories WHERE id = ?').get(id) as any;
+    return row ? this.mapCategory(row) : null;
   }
 
-  // Product queries
+  createCategory(input: {
+    name: string;
+    description?: string;
+    icon?: string;
+    imageUrl?: string;
+    displayOrder?: number;
+    isActive?: boolean;
+  }): Category {
+    const id = `cat-${Date.now().toString().slice(-6)}`;
+    const now = new Date().toISOString();
+    const rest = this.getRestaurant();
+    const cat: Category = {
+      id,
+      restaurantId: rest.id,
+      name: input.name.trim(),
+      description: input.description?.trim() || undefined,
+      icon: input.icon?.trim() || '🍽️',
+      imageUrl: input.imageUrl?.trim() || undefined,
+      displayOrder: input.displayOrder ?? 99,
+      isActive: input.isActive ?? true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const stmt = this.db.prepare(`
+      INSERT INTO categories (
+        id, restaurant_id, name, description, image_url, icon,
+        display_order, is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    stmt.run(
+      cat.id,
+      cat.restaurantId,
+      cat.name,
+      cat.description || null,
+      cat.imageUrl || null,
+      cat.icon || null,
+      cat.displayOrder,
+      cat.isActive ? 1 : 0,
+      cat.createdAt,
+      cat.updatedAt
+    );
+
+    return cat;
+  }
+
+  // ==========================================
+  // Product Queries & Management
+  // ==========================================
+
   getProducts(filter?: {
     categoryId?: string;
     isAvailableOnly?: boolean;
     search?: string;
     isFeaturedOnly?: boolean;
   }): Product[] {
-    let list = [...this.products];
+    let sql = 'SELECT * FROM products WHERE 1=1';
+    const params: any[] = [];
 
     if (filter?.categoryId) {
-      list = list.filter((p) => p.categoryId === filter.categoryId);
+      sql += ' AND category_id = ?';
+      params.push(filter.categoryId);
     }
-
     if (filter?.isAvailableOnly) {
-      list = list.filter((p) => p.isAvailable);
+      sql += ' AND is_available = 1';
     }
-
     if (filter?.isFeaturedOnly) {
-      list = list.filter((p) => p.isFeatured);
+      sql += ' AND is_featured = 1';
     }
-
     if (filter?.search) {
-      const q = filter.search.toLowerCase().trim();
-      list = list.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          p.description.toLowerCase().includes(q) ||
-          (p.tags && p.tags.toLowerCase().includes(q))
-      );
+      const q = `%${filter.search.toLowerCase().trim()}%`;
+      sql += ' AND (LOWER(name) LIKE ? OR LOWER(description) LIKE ? OR LOWER(tags) LIKE ?)';
+      params.push(q, q, q);
     }
 
-    return list.sort((a, b) => a.displayOrder - b.displayOrder);
+    sql += ' ORDER BY display_order ASC';
+    const rows = this.db.prepare(sql).all(...params) as any[];
+    return rows.map(this.mapProduct);
   }
 
   getProductById(id: string): Product | null {
-    const prod = this.products.find((p) => p.id === id);
-    return prod ? { ...prod } : null;
+    const row = this.db.prepare('SELECT * FROM products WHERE id = ?').get(id) as any;
+    return row ? this.mapProduct(row) : null;
   }
 
-  // For testing purposes: update product price/availability
+  createProduct(input: {
+    categoryId: string;
+    name: string;
+    description: string;
+    price: number;
+    imageUrl?: string;
+    isAvailable?: boolean;
+    isFeatured?: boolean;
+    displayOrder?: number;
+    preparationTimeMinutes?: number;
+    calories?: number;
+    tags?: string;
+  }): Product {
+    const id = `prod-dz-${Date.now().toString().slice(-6)}`;
+    const now = new Date().toISOString();
+    const rest = this.getRestaurant();
+
+    // Verify category exists
+    const cat = this.getCategoryById(input.categoryId);
+    if (!cat) {
+      throw new Error('التصنيف المحدد غير موجود');
+    }
+
+    const prod: Product = {
+      id,
+      restaurantId: rest.id,
+      categoryId: input.categoryId,
+      name: input.name.trim(),
+      description: input.description.trim(),
+      price: Math.max(0, Math.round(Number(input.price))),
+      imageUrl: input.imageUrl?.trim() || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80',
+      isAvailable: input.isAvailable ?? true,
+      isFeatured: input.isFeatured ?? false,
+      displayOrder: input.displayOrder ?? 99,
+      preparationTimeMinutes: input.preparationTimeMinutes ?? 15,
+      calories: input.calories ?? undefined,
+      tags: input.tags?.trim() || undefined,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const stmt = this.db.prepare(`
+      INSERT INTO products (
+        id, restaurant_id, category_id, name, description, price,
+        image_url, is_available, is_featured, display_order,
+        preparation_time_minutes, calories, tags, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    stmt.run(
+      prod.id,
+      prod.restaurantId,
+      prod.categoryId,
+      prod.name,
+      prod.description,
+      prod.price,
+      prod.imageUrl,
+      prod.isAvailable ? 1 : 0,
+      prod.isFeatured ? 1 : 0,
+      prod.displayOrder,
+      prod.preparationTimeMinutes ?? null,
+      prod.calories ?? null,
+      prod.tags || null,
+      prod.createdAt,
+      prod.updatedAt
+    );
+
+    return prod;
+  }
+
   updateProduct(id: string, updates: Partial<Product>): Product | null {
-    const index = this.products.findIndex((p) => p.id === id);
-    if (index === -1) return null;
-    this.products[index] = {
-      ...this.products[index],
+    const prod = this.getProductById(id);
+    if (!prod) return null;
+
+    const updated: Product = {
+      ...prod,
       ...updates,
       updatedAt: new Date().toISOString(),
     };
-    return { ...this.products[index] };
+
+    const stmt = this.db.prepare(`
+      UPDATE products SET
+        category_id = ?,
+        name = ?,
+        description = ?,
+        price = ?,
+        image_url = ?,
+        is_available = ?,
+        is_featured = ?,
+        display_order = ?,
+        preparation_time_minutes = ?,
+        calories = ?,
+        tags = ?,
+        updated_at = ?
+      WHERE id = ?
+    `);
+
+    stmt.run(
+      updated.categoryId,
+      updated.name,
+      updated.description,
+      updated.price,
+      updated.imageUrl,
+      updated.isAvailable ? 1 : 0,
+      updated.isFeatured ? 1 : 0,
+      updated.displayOrder,
+      updated.preparationTimeMinutes ?? null,
+      updated.calories ?? null,
+      updated.tags || null,
+      updated.updatedAt,
+      id
+    );
+
+    return updated;
   }
 
-  // User queries
+  // ==========================================
+  // User Queries & Authentication
+  // ==========================================
+
   getUserByEmail(email: string): User | null {
-    const user = this.users.find((u) => u.email.toLowerCase() === email.toLowerCase());
-    return user ? { ...user } : null;
+    return this.getUserByEmailOrUsername(email);
+  }
+
+  getUserByEmailOrUsername(identifier: string): User | null {
+    if (!identifier) return null;
+    const clean = identifier.trim().toLowerCase();
+    const cleanUsername = clean.includes('@') ? clean.split('@')[0] : clean;
+
+    const row = this.db.prepare(`
+      SELECT * FROM users
+      WHERE LOWER(email) = ?
+         OR LOWER(username) = ?
+         OR phone = ?
+         OR LOWER(username) = ?
+      LIMIT 1
+    `).get(clean, clean, identifier.trim(), cleanUsername) as any;
+
+    return row ? this.mapUser(row) : null;
   }
 
   getUserById(id: string): User | null {
-    const user = this.users.find((u) => u.id === id);
-    return user ? { ...user } : null;
+    const row = this.db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any;
+    return row ? this.mapUser(row) : null;
   }
 
   toSafeUser(user: User): SafeUser {
@@ -393,6 +748,7 @@ class DatabaseStore {
       id: user.id,
       name: user.name,
       email: user.email,
+      username: user.username || user.email.split('@')[0],
       phone: user.phone,
       role: user.role,
       restaurantId: user.restaurantId,
@@ -401,61 +757,31 @@ class DatabaseStore {
   }
 
   // ==========================================
-  // PHASE 2: ORDERS ENGINE (ATOMIC TRANSACTION & SECURE CALCULATION)
+  // Orders Engine (SQLite Atomic Transaction)
   // ==========================================
 
-  /**
-   * إنشاء طلب جديد داخل Database Transaction آمنة:
-   * 1. فحص وجود المطعم
-   * 2. فحص السلة والتأكد من عدم فراغها
-   * 3. جلب الوجبات من قاعدة البيانات والتحقق من وجودها وتوفرها
-   * 4. قراءة السعر من قاعدة البيانات حصراً وحساب الأسعار بشكل مستقل
-   * 5. تجميد اسم وسعر كل وجبة تاريخياً في OrderItem
-   * 6. التحقق من منطقة التوصيل وحساب رسوم التوصيل والمجموع النهائي
-   * 7. توليد رقم طلب تسلسلي واضح مثل #1003
-   * 8. حفظ الطلب في عملية واحدة مكتملة
-   */
   async createOrder(input: CreateOrderInput): Promise<Order> {
-    // 1. Idempotency Check: Prevent duplicate submissions
+    // 1. Idempotency Check
     if (input.idempotencyKey) {
       const cached = this.idempotencyCache.get(input.idempotencyKey);
       if (cached && Date.now() - cached.timestamp < 120000) {
-        // Return previously created order if repeated within 2 minutes
         return cached.order;
       }
     }
 
-    // 2. Validation: Customer info
+    // 2. Validation
     if (!input.customerName || typeof input.customerName !== 'string' || input.customerName.trim().length === 0) {
-      throw new Error('يرجى إدخال الاسم واللقب بشكل صحيح');
+      throw new Error('يرجى إدخال اسم الزبون الكريم');
     }
-
     if (!input.customerPhone || !isValidAlgerianPhone(input.customerPhone)) {
-      throw new Error('يرجى إدخال رقم هاتف جزائري صحيح (مثال: 0550123456 أو 0661234567 أو 0770123456)');
+      throw new Error('رقم الهاتف غير صالح، يجب أن يكون رقم جزائري يبدأ بـ 05 أو 06 أو 07 ويتكون من 10 أرقام');
     }
-
-    if (!input.wilaya || typeof input.wilaya !== 'string' || input.wilaya.trim().length === 0) {
-      throw new Error('يرجى تحديد الولاية');
-    }
-
-    if (!input.commune || typeof input.commune !== 'string' || input.commune.trim().length === 0) {
-      throw new Error('يرجى تحديد البلدية');
-    }
-
-    if (!input.neighborhood || typeof input.neighborhood !== 'string' || input.neighborhood.trim().length === 0) {
-      throw new Error('يرجى إدخال الحي أو المنطقة');
-    }
-
     if (!input.address || typeof input.address !== 'string' || input.address.trim().length === 0) {
-      throw new Error('يرجى إدخال العنوان التفصيلي (الشارع ورقم العمارة والطابق)');
+      throw new Error('يرجى تحديد عنوان التوصيل بالتفصيل');
     }
-
-    // 3. Validation: Empty Cart
-    if (!Array.isArray(input.items) || input.items.length === 0) {
-      throw new Error('السلة فارغة، يرجى اختيار وجبة واحدة على الأقل لإتمام الطلب');
+    if (!input.items || !Array.isArray(input.items) || input.items.length === 0) {
+      throw new Error('سلة الطلب فارغة، يرجى اختيار وجبة واحدة على الأقل');
     }
-
-    // 4. Validation & Pricing: Delivery Zone from Database
     if (!input.deliveryZoneId) {
       throw new Error('يرجى اختيار منطقة وبلدية التوصيل');
     }
@@ -465,7 +791,7 @@ class DatabaseStore {
       throw new Error('منطقة التوصيل المختارة غير صالحة أو غير نشطة حالياً');
     }
 
-    // 5. ATOMIC VERIFICATION & SECURE CALCULATION FROM DATABASE
+    // 3. ATOMIC VERIFICATION & SECURE CALCULATION FROM DATABASE
     const orderId = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const orderItems: OrderItem[] = [];
     let calculatedSubtotal = 0;
@@ -475,24 +801,19 @@ class DatabaseStore {
         throw new Error('معرف الوجبة مفقود في الطلب');
       }
 
-      // Check product in DB
       const dbProduct = this.getProductById(itemInput.productId);
       if (!dbProduct) {
         throw new Error(`الوجبة المطلوبة (المعرف: ${itemInput.productId}) غير موجودة في قائمة المطعم`);
       }
-
-      // Check availability
       if (!dbProduct.isAvailable) {
         throw new Error(`نعتذر، الوجبة "${dbProduct.name}" غير متوفرة حالياً في المطبخ`);
       }
 
-      // Check quantity is positive integer
       const quantity = Number(itemInput.quantity);
       if (!Number.isInteger(quantity) || quantity <= 0) {
         throw new Error(`الكمية المحددة للوجبة "${dbProduct.name}" يجب أن تكون عدداً صحيحاً أكبر من صفر`);
       }
 
-      // Freeze historical snapshot: price from DB (never client!)
       const unitPrice = dbProduct.price;
       const itemTotalPrice = unitPrice * quantity;
       calculatedSubtotal += itemTotalPrice;
@@ -501,8 +822,8 @@ class DatabaseStore {
         id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         orderId,
         productId: dbProduct.id,
-        productName: dbProduct.name, // Frozen historical name
-        unitPrice,                   // Frozen historical unit price in DZD
+        productName: dbProduct.name,
+        unitPrice,
         quantity,
         totalPrice: itemTotalPrice,
         notes: itemInput.notes?.trim() || undefined,
@@ -510,83 +831,131 @@ class DatabaseStore {
       });
     }
 
-    // Check Minimum Order Amount for this zone
     if (calculatedSubtotal < zone.minOrderAmount) {
       throw new Error(
         `الحد الأدنى للطلب لمنطقة "${zone.commune}" هو ${zone.minOrderAmount} دج. مجموع وجباتك الحالي هو ${calculatedSubtotal} دج`
       );
     }
 
-    // Exact delivery fee from DB
     const deliveryFee = zone.deliveryFee;
     const finalTotal = calculatedSubtotal + deliveryFee;
 
-    // Generate unique human-readable order number
-    this.orderCounter += 1;
-    const orderNumber = `#${this.orderCounter}`;
+    // Get next order counter atomically from SQLite
+    const maxOrderRow = this.db.prepare(`
+      SELECT order_number FROM orders ORDER BY rowid DESC LIMIT 1
+    `).get() as any;
 
-    const newOrder: Order = {
-      id: orderId,
-      orderNumber,
-      restaurantId: this.restaurant.id,
-      status: 'NEW',
-      orderType: 'DELIVERY',
-      paymentMethod: input.paymentMethod || 'CASH_ON_DELIVERY',
-      paymentStatus: 'UNPAID',
-      subtotal: calculatedSubtotal,
-      deliveryFee,
-      total: finalTotal,
-      customerName: input.customerName.trim(),
-      customerPhone: input.customerPhone.trim(),
-      wilaya: input.wilaya.trim(),
-      daira: input.daira?.trim() || undefined,
-      commune: input.commune.trim(),
-      neighborhood: input.neighborhood.trim(),
-      address: input.address.trim(),
-      deliveryAddress: input.address.trim(),
-      notes: input.notes?.trim() || undefined,
-      items: orderItems,
-      idempotencyKey: input.idempotencyKey,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    let nextCounter = 1001;
+    if (maxOrderRow?.order_number) {
+      const parsed = parseInt(maxOrderRow.order_number.replace('#', ''), 10);
+      if (!isNaN(parsed)) {
+        nextCounter = parsed + 1;
+      }
+    }
+    const orderNumber = `#${nextCounter}`;
+    const now = new Date().toISOString();
+    const rest = this.getRestaurant();
 
-    // Save atomically
-    this.orders.unshift(newOrder);
+    // 4. Save into SQLite within an atomic transaction
+    this.db.exec('BEGIN TRANSACTION;');
+    try {
+      const orderStmt = this.db.prepare(`
+        INSERT INTO orders (
+          id, order_number, restaurant_id, status, order_type,
+          payment_method, payment_status, subtotal, delivery_fee, total,
+          customer_name, customer_phone, wilaya, daira, commune, neighborhood,
+          address, delivery_address, notes, idempotency_key, created_at, updated_at
+        ) VALUES (
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?
+        )
+      `);
 
-    // Cache idempotency key
+      orderStmt.run(
+        orderId,
+        orderNumber,
+        rest.id,
+        'NEW',
+        'DELIVERY',
+        input.paymentMethod || 'CASH_ON_DELIVERY',
+        'UNPAID',
+        calculatedSubtotal,
+        deliveryFee,
+        finalTotal,
+        input.customerName.trim(),
+        input.customerPhone.trim(),
+        input.wilaya.trim(),
+        input.daira?.trim() || null,
+        input.commune.trim(),
+        input.neighborhood.trim(),
+        input.address.trim(),
+        input.address.trim(),
+        input.notes?.trim() || null,
+        input.idempotencyKey || null,
+        now,
+        now
+      );
+
+      const itemStmt = this.db.prepare(`
+        INSERT INTO order_items (
+          id, order_id, product_id, product_name, unit_price,
+          quantity, total_price, notes, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (const item of orderItems) {
+        itemStmt.run(
+          item.id,
+          item.orderId,
+          item.productId || null,
+          item.productName,
+          item.unitPrice,
+          item.quantity,
+          item.totalPrice,
+          item.notes || null,
+          item.createdAt
+        );
+      }
+
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
+
+    const createdOrder = this.getOrderById(orderId)!;
+
     if (input.idempotencyKey) {
       this.idempotencyCache.set(input.idempotencyKey, {
-        order: newOrder,
+        order: createdOrder,
         timestamp: Date.now(),
       });
     }
 
-    console.log(`[DatabaseStore] Order created successfully: ${orderNumber} for ${newOrder.customerName}, Total: ${finalTotal} DZD`);
-    return newOrder;
+    console.log(`[SQLiteDatabaseStore] Order created successfully: ${orderNumber} for ${createdOrder.customerName}, Total: ${finalTotal} DZD`);
+    return createdOrder;
   }
 
-  // Get single order by ID
   getOrderById(id: string): Order | null {
-    const order = this.orders.find((o) => o.id === id);
-    return order ? JSON.parse(JSON.stringify(order)) : null;
+    const row = this.db.prepare('SELECT * FROM orders WHERE id = ?').get(id) as any;
+    if (!row) return null;
+    return this.populateOrder(row);
   }
 
-  // Get single order by order number (e.g. #1001 or 1001)
   getOrderByNumber(num: string): Order | null {
     const cleanNum = num.trim().startsWith('#') ? num.trim() : `#${num.trim()}`;
-    const order = this.orders.find((o) => o.orderNumber.toLowerCase() === cleanNum.toLowerCase());
-    return order ? JSON.parse(JSON.stringify(order)) : null;
+    const row = this.db.prepare('SELECT * FROM orders WHERE LOWER(order_number) = LOWER(?)').get(cleanNum) as any;
+    if (!row) return null;
+    return this.populateOrder(row);
   }
 
-  // Get all orders (for Admin/Manager dashboard)
   getAllOrders(): Order[] {
-    return JSON.parse(JSON.stringify(this.orders)).sort(
-      (a: Order, b: Order) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
+    const rows = this.db.prepare('SELECT * FROM orders ORDER BY created_at DESC').all() as any[];
+    return rows.map((r) => this.populateOrder(r));
   }
 
-  // Update order status (Admin / Manager only)
   updateOrderStatus(orderId: string, newStatus: OrderStatus): Order {
     const validStatuses: OrderStatus[] = [
       'NEW',
@@ -602,96 +971,96 @@ class DatabaseStore {
       throw new Error(`حالة الطلب غير صالحة: ${newStatus}`);
     }
 
-    const orderIndex = this.orders.findIndex((o) => o.id === orderId);
-    if (orderIndex === -1) {
+    const order = this.getOrderById(orderId);
+    if (!order) {
       throw new Error('الطلب المطلوب غير موجود');
     }
 
-    this.orders[orderIndex] = {
-      ...this.orders[orderIndex],
-      status: newStatus,
-      updatedAt: new Date().toISOString(),
-    };
+    const now = new Date().toISOString();
+    let paymentStatus = order.paymentStatus;
+    let deliveredAt = order.deliveredAt;
+    let courierFee = order.courierFeeAtDelivery;
+    let courierPaid = order.courierPaid;
 
     if (newStatus === 'DELIVERED') {
-      this.orders[orderIndex].paymentStatus = 'PAID';
-      if (!this.orders[orderIndex].deliveredAt) {
-        this.orders[orderIndex].deliveredAt = new Date().toISOString();
-      }
-      if (this.orders[orderIndex].deliveryPersonId) {
-        const dp = this.deliveryPeople.find((p) => p.id === this.orders[orderIndex].deliveryPersonId);
-        const fee = dp?.deliveryFeePerOrder ?? this.restaurant.defaultCourierFeePerOrder ?? 100;
-        if (this.orders[orderIndex].courierFeeAtDelivery === undefined) {
-          this.orders[orderIndex].courierFeeAtDelivery = fee;
-        }
-        if (this.orders[orderIndex].courierPaid === undefined) {
-          this.orders[orderIndex].courierPaid = false;
-        }
+      paymentStatus = 'PAID';
+      if (!deliveredAt) deliveredAt = now;
+      if (order.deliveryPersonId) {
+        const dp = this.getDeliveryPersonById(order.deliveryPersonId);
+        const rest = this.getRestaurant();
+        const fee = dp?.deliveryFeePerOrder ?? rest.defaultCourierFeePerOrder ?? 100;
+        if (courierFee === undefined) courierFee = fee;
+        if (courierPaid === undefined) courierPaid = false;
       }
     }
 
-    console.log(`[DatabaseStore] Order ${this.orders[orderIndex].orderNumber} status changed to ${newStatus}`);
-    return JSON.parse(JSON.stringify(this.orders[orderIndex]));
-  }
+    const stmt = this.db.prepare(`
+      UPDATE orders SET
+        status = ?,
+        payment_status = ?,
+        delivered_at = ?,
+        courier_fee_at_delivery = ?,
+        courier_paid = ?,
+        updated_at = ?
+      WHERE id = ?
+    `);
 
-  // ==========================================
-  // Delivery Staff Management (Phase 3)
-  // ==========================================
-
-  // Get all delivery personnel with their statistics
-  getAllDeliveryPeople(): DeliveryPerson[] {
-    return this.deliveryPeople.map((dp) => {
-      const assigned = this.orders.filter((o) => o.deliveryPersonId === dp.id);
-      const active = assigned.filter((o) =>
-        ['CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY'].includes(o.status)
-      );
-      const completed = assigned.filter((o) => o.status === 'DELIVERED');
-
-      return {
-        ...dp,
-        assignedOrdersCount: assigned.length,
-        activeOrdersCount: active.length,
-        completedOrdersCount: completed.length,
-      };
-    });
-  }
-
-  // Get delivery person by ID
-  getDeliveryPersonById(id: string): DeliveryPerson | null {
-    const dp = this.deliveryPeople.find((p) => p.id === id);
-    if (!dp) return null;
-
-    const assigned = this.orders.filter((o) => o.deliveryPersonId === dp.id);
-    const active = assigned.filter((o) =>
-      ['CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY'].includes(o.status)
+    stmt.run(
+      newStatus,
+      paymentStatus,
+      deliveredAt || null,
+      courierFee ?? null,
+      courierPaid ? 1 : 0,
+      now,
+      orderId
     );
-    const completed = assigned.filter((o) => o.status === 'DELIVERED');
 
-    return {
-      ...dp,
-      assignedOrdersCount: assigned.length,
-      activeOrdersCount: active.length,
-      completedOrdersCount: completed.length,
-    };
+    console.log(`[SQLiteDatabaseStore] Order ${order.orderNumber} status changed to ${newStatus}`);
+    return this.getOrderById(orderId)!;
   }
 
-  // Get delivery person by user ID
+  // ==========================================
+  // Delivery Staff Management
+  // ==========================================
+
+  getAllDeliveryPeople(): DeliveryPerson[] {
+    const rows = this.db.prepare('SELECT * FROM delivery_people ORDER BY created_at ASC').all() as any[];
+    return rows.map((r) => this.populateDeliveryPersonStats(this.mapDeliveryPerson(r)));
+  }
+
+  getDeliveryPersonById(id: string): DeliveryPerson | null {
+    const row = this.db.prepare('SELECT * FROM delivery_people WHERE id = ?').get(id) as any;
+    if (!row) return null;
+    return this.populateDeliveryPersonStats(this.mapDeliveryPerson(row));
+  }
+
   getDeliveryPersonByUserId(userId: string): DeliveryPerson | null {
-    const dp = this.deliveryPeople.find((p) => p.userId === userId);
-    if (!dp) return null;
-    return this.getDeliveryPersonById(dp.id);
+    const row = this.db.prepare('SELECT * FROM delivery_people WHERE user_id = ?').get(userId) as any;
+    if (!row) return null;
+    return this.populateDeliveryPersonStats(this.mapDeliveryPerson(row));
   }
 
-  // Create new delivery person (Admin only)
   async createDeliveryPerson(input: CreateDeliveryPersonInput): Promise<DeliveryPerson> {
     const cleanPhone = input.phone.trim();
     if (!isValidAlgerianPhone(cleanPhone)) {
       throw new Error('رقم الهاتف غير صالح، يجب أن يكون رقم جزائري يبدأ بـ 05 أو 06 أو 07 ويتكون من 10 أرقام');
     }
 
-    const cleanEmail = input.email.trim().toLowerCase();
-    if (this.users.some((u) => u.email.toLowerCase() === cleanEmail)) {
-      throw new Error('البريد الإلكتروني مسجل مسبقاً لمستخدم آخر');
+    const cleanInput = (input.email || input.username || '').trim().toLowerCase();
+    if (!cleanInput) {
+      throw new Error('يرجى إدخال اسم المستخدم أو البريد الإلكتروني لمسؤول التوصيل');
+    }
+
+    const username = (input.username || (cleanInput.includes('@') ? cleanInput.split('@')[0] : cleanInput)).trim().toLowerCase();
+    const email = cleanInput;
+
+    // Check uniqueness in SQLite
+    const existing = this.db.prepare(`
+      SELECT id FROM users WHERE LOWER(email) = ? OR LOWER(username) = ? LIMIT 1
+    `).get(email, username);
+
+    if (existing) {
+      throw new Error('اسم المستخدم أو البريد الإلكتروني مسجل مسبقاً لمستخدم آخر');
     }
 
     if (!input.password || input.password.length < 6) {
@@ -699,53 +1068,73 @@ class DatabaseStore {
     }
 
     const passwordHash = await bcrypt.hash(input.password, 10);
-    const userId = `usr-del-dz-${Date.now().toString().slice(-6)}`;
-    const dpId = `dp-${Date.now().toString().slice(-6)}`;
+    const uidSuffix = `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const userId = `usr-del-dz-${uidSuffix}`;
+    const dpId = `dp-${uidSuffix}`;
+    const now = new Date().toISOString();
+    const rest = this.getRestaurant();
 
-    const newUser: User = {
-      id: userId,
-      restaurantId: this.restaurant.id,
-      name: input.name.trim(),
-      email: cleanEmail,
-      passwordHash,
-      phone: cleanPhone,
-      role: 'DELIVERY',
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    this.users.push(newUser);
+    const feePerOrder = input.deliveryFeePerOrder !== undefined
+      ? Math.max(0, Math.round(Number(input.deliveryFeePerOrder)))
+      : (rest.defaultCourierFeePerOrder ?? 100);
 
-    const newDeliveryPerson: DeliveryPerson = {
-      id: dpId,
-      restaurantId: this.restaurant.id,
-      userId,
-      name: input.name.trim(),
-      phone: cleanPhone,
-      email: cleanEmail,
-      isActive: true,
-      isAvailable: true,
-      deliveryFeePerOrder: input.deliveryFeePerOrder !== undefined
-        ? Math.max(0, Math.round(Number(input.deliveryFeePerOrder)))
-        : (this.restaurant.defaultCourierFeePerOrder ?? 100),
-      vehicleType: input.vehicleType ? input.vehicleType.trim() : 'توصيل',
-      vehiclePlateNumber: input.vehiclePlateNumber?.trim() || undefined,
-      assignedOrdersCount: 0,
-      activeOrdersCount: 0,
-      completedOrdersCount: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    this.deliveryPeople.push(newDeliveryPerson);
+    this.db.exec('BEGIN TRANSACTION;');
+    try {
+      // 1. Insert user
+      const userStmt = this.db.prepare(`
+        INSERT INTO users (
+          id, restaurant_id, name, email, username, password_hash,
+          phone, role, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      `);
+      userStmt.run(
+        userId,
+        rest.id,
+        input.name.trim(),
+        email,
+        username,
+        passwordHash,
+        cleanPhone,
+        'DELIVERY',
+        now,
+        now
+      );
 
-    console.log(`[DatabaseStore] Created delivery person: ${newDeliveryPerson.name} (${newDeliveryPerson.id})`);
-    return JSON.parse(JSON.stringify(newDeliveryPerson));
+      // 2. Insert delivery person
+      const dpStmt = this.db.prepare(`
+        INSERT INTO delivery_people (
+          id, restaurant_id, user_id, name, phone, email,
+          is_active, is_available, delivery_fee_per_order, vehicle_type,
+          vehicle_plate_number, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?)
+      `);
+      dpStmt.run(
+        dpId,
+        rest.id,
+        userId,
+        input.name.trim(),
+        cleanPhone,
+        email,
+        feePerOrder,
+        input.vehicleType ? input.vehicleType.trim() : 'توصيل',
+        input.vehiclePlateNumber?.trim() || null,
+        now,
+        now
+      );
+
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
+
+    console.log(`[SQLiteDatabaseStore] Created delivery person: ${input.name.trim()} (${dpId}) in SQLite`);
+    return this.getDeliveryPersonById(dpId)!;
   }
 
-  // Update delivery person details
   updateDeliveryPerson(id: string, input: UpdateDeliveryPersonInput): DeliveryPerson {
-    const dpIndex = this.deliveryPeople.findIndex((p) => p.id === id);
-    if (dpIndex === -1) {
+    const dp = this.getDeliveryPersonById(id);
+    if (!dp) {
       throw new Error('عامل التوصيل غير موجود');
     }
 
@@ -754,70 +1143,111 @@ class DatabaseStore {
       if (!isValidAlgerianPhone(cleanPhone)) {
         throw new Error('رقم الهاتف غير صالح، يجب أن يكون رقم جزائري 05/06/07');
       }
-      this.deliveryPeople[dpIndex].phone = cleanPhone;
+      dp.phone = cleanPhone;
     }
 
-    if (input.name) {
-      this.deliveryPeople[dpIndex].name = input.name.trim();
-    }
+    if (input.name) dp.name = input.name.trim();
     if (input.deliveryFeePerOrder !== undefined) {
-      this.deliveryPeople[dpIndex].deliveryFeePerOrder = Math.max(0, Math.round(Number(input.deliveryFeePerOrder)));
+      dp.deliveryFeePerOrder = Math.max(0, Math.round(Number(input.deliveryFeePerOrder)));
     }
-    if (input.vehicleType !== undefined) {
-      this.deliveryPeople[dpIndex].vehicleType = input.vehicleType.trim();
-    }
+    if (input.vehicleType !== undefined) dp.vehicleType = input.vehicleType.trim();
     if (input.vehiclePlateNumber !== undefined) {
-      this.deliveryPeople[dpIndex].vehiclePlateNumber = input.vehiclePlateNumber.trim() || undefined;
+      dp.vehiclePlateNumber = input.vehiclePlateNumber.trim() || undefined;
     }
     if (input.isActive !== undefined) {
-      this.deliveryPeople[dpIndex].isActive = input.isActive;
-      if (!input.isActive) {
-        this.deliveryPeople[dpIndex].isAvailable = false;
-      }
+      dp.isActive = input.isActive;
+      if (!input.isActive) dp.isAvailable = false;
     }
     if (input.isAvailable !== undefined) {
-      this.deliveryPeople[dpIndex].isAvailable = input.isAvailable;
+      dp.isAvailable = input.isAvailable;
     }
 
-    this.deliveryPeople[dpIndex].updatedAt = new Date().toISOString();
+    const now = new Date().toISOString();
 
-    // Also update associated User
-    const userIndex = this.users.findIndex((u) => u.id === this.deliveryPeople[dpIndex].userId);
-    if (userIndex !== -1) {
-      if (input.name) this.users[userIndex].name = input.name.trim();
-      if (input.phone) this.users[userIndex].phone = input.phone.trim();
-      if (input.isActive !== undefined) this.users[userIndex].isActive = input.isActive;
-      this.users[userIndex].updatedAt = new Date().toISOString();
+    this.db.exec('BEGIN TRANSACTION;');
+    try {
+      const stmt = this.db.prepare(`
+        UPDATE delivery_people SET
+          name = ?,
+          phone = ?,
+          delivery_fee_per_order = ?,
+          vehicle_type = ?,
+          vehicle_plate_number = ?,
+          is_active = ?,
+          is_available = ?,
+          updated_at = ?
+        WHERE id = ?
+      `);
+      stmt.run(
+        dp.name,
+        dp.phone,
+        dp.deliveryFeePerOrder ?? 100,
+        dp.vehicleType || 'توصيل',
+        dp.vehiclePlateNumber || null,
+        dp.isActive ? 1 : 0,
+        dp.isAvailable ? 1 : 0,
+        now,
+        id
+      );
+
+      // Sync user
+      const userStmt = this.db.prepare(`
+        UPDATE users SET
+          name = ?,
+          phone = ?,
+          is_active = ?,
+          updated_at = ?
+        WHERE id = ?
+      `);
+      userStmt.run(dp.name, dp.phone, dp.isActive ? 1 : 0, now, dp.userId);
+
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
     }
-
-    // Sync delivery summary in active orders
-    const dp = this.deliveryPeople[dpIndex];
-    this.orders.forEach((o) => {
-      if (o.deliveryPersonId === dp.id) {
-        o.deliveryPerson = {
-          id: dp.id,
-          name: dp.name,
-          phone: dp.phone,
-          vehicleType: dp.vehicleType,
-          vehiclePlateNumber: dp.vehiclePlateNumber,
-          isAvailable: dp.isAvailable,
-        };
-      }
-    });
 
     return this.getDeliveryPersonById(id)!;
   }
 
-  // Toggle delivery person active status
+  deleteDeliveryPerson(id: string): DeliveryPerson {
+    const dp = this.getDeliveryPersonById(id);
+    if (!dp) throw new Error('مسؤول التوصيل غير موجود');
+
+    // Check if delivery person has active/incomplete orders
+    const countRow = this.db.prepare(`
+      SELECT COUNT(*) as count FROM orders
+      WHERE delivery_person_id = ? AND status NOT IN ('DELIVERED', 'CANCELLED')
+    `).get(id) as any;
+
+    if (countRow?.count > 0) {
+      throw new Error('لا يمكن حذف مسؤول التوصيل لأنه مرتبط بطلبات غير مكتملة. قم أولًا بمعالجة هذه الطلبات.');
+    }
+
+    // Soft delete: deactivate account
+    return this.updateDeliveryPerson(id, { isActive: false, isAvailable: false });
+  }
+
   toggleDeliveryPersonStatus(id: string): DeliveryPerson {
-    const dp = this.deliveryPeople.find((p) => p.id === id);
+    const dp = this.getDeliveryPersonById(id);
     if (!dp) throw new Error('عامل التوصيل غير موجود');
+
+    if (dp.isActive) {
+      const countRow = this.db.prepare(`
+        SELECT COUNT(*) as count FROM orders
+        WHERE delivery_person_id = ? AND status NOT IN ('DELIVERED', 'CANCELLED')
+      `).get(id) as any;
+
+      if (countRow?.count > 0) {
+        throw new Error('لا يمكن حذف مسؤول التوصيل لأنه مرتبط بطلبات غير مكتملة. قم أولًا بمعالجة هذه الطلبات.');
+      }
+    }
+
     return this.updateDeliveryPerson(id, { isActive: !dp.isActive });
   }
 
-  // Set availability (e.g. driver goes online / offline)
   setDeliveryPersonAvailability(id: string, isAvailable: boolean): DeliveryPerson {
-    const dp = this.deliveryPeople.find((p) => p.id === id);
+    const dp = this.getDeliveryPersonById(id);
     if (!dp) throw new Error('عامل التوصيل غير موجود');
     if (!dp.isActive && isAvailable) {
       throw new Error('لا يمكن تفعيل التواجد لحساب معطل من قبل الإدارة');
@@ -825,82 +1255,61 @@ class DatabaseStore {
     return this.updateDeliveryPerson(id, { isAvailable });
   }
 
-  // Assign or unassign order to a delivery person
   assignOrderToDeliveryPerson(orderId: string, deliveryPersonId: string | null): Order {
-    const orderIndex = this.orders.findIndex((o) => o.id === orderId);
-    if (orderIndex === -1) {
-      throw new Error('الطلب غير موجود');
-    }
+    const order = this.getOrderById(orderId);
+    if (!order) throw new Error('الطلب غير موجود');
+
+    const now = new Date().toISOString();
 
     if (!deliveryPersonId) {
-      // Unassign
-      this.orders[orderIndex] = {
-        ...this.orders[orderIndex],
-        deliveryPersonId: undefined,
-        deliveryPerson: undefined,
-        updatedAt: new Date().toISOString(),
-      };
-      console.log(`[DatabaseStore] Order ${this.orders[orderIndex].orderNumber} unassigned from delivery.`);
-      return JSON.parse(JSON.stringify(this.orders[orderIndex]));
+      this.db.prepare(`
+        UPDATE orders SET
+          delivery_person_id = NULL,
+          updated_at = ?
+        WHERE id = ?
+      `).run(now, orderId);
+      return this.getOrderById(orderId)!;
     }
 
-    const dp = this.deliveryPeople.find((p) => p.id === deliveryPersonId);
-    if (!dp) {
-      throw new Error('عامل التوصيل المحدد غير موجود');
-    }
-    if (!dp.isActive) {
-      throw new Error('لا يمكن إسناد الطلب لعامل توصيل معطل');
-    }
+    const dp = this.getDeliveryPersonById(deliveryPersonId);
+    if (!dp) throw new Error('عامل التوصيل المحدد غير موجود');
+    if (!dp.isActive) throw new Error('لا يمكن إسناد الطلب لعامل توصيل معطل');
 
-    let nextStatus = this.orders[orderIndex].status;
+    let nextStatus = order.status;
     if (nextStatus === 'NEW' || nextStatus === 'CONFIRMED') {
       nextStatus = 'READY';
     }
 
-    this.orders[orderIndex] = {
-      ...this.orders[orderIndex],
-      deliveryPersonId: dp.id,
-      deliveryPerson: {
-        id: dp.id,
-        name: dp.name,
-        phone: dp.phone,
-        vehicleType: dp.vehicleType,
-        vehiclePlateNumber: dp.vehiclePlateNumber,
-        isAvailable: dp.isAvailable,
-      },
-      status: nextStatus,
-      updatedAt: new Date().toISOString(),
-    };
+    this.db.prepare(`
+      UPDATE orders SET
+        delivery_person_id = ?,
+        status = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).run(dp.id, nextStatus, now, orderId);
 
-    console.log(`[DatabaseStore] Order ${this.orders[orderIndex].orderNumber} assigned to driver ${dp.name}`);
-    return JSON.parse(JSON.stringify(this.orders[orderIndex]));
+    return this.getOrderById(orderId)!;
   }
 
-  // Get orders assigned to a specific delivery driver
   getOrdersForDeliveryPerson(deliveryPersonId: string): Order[] {
-    return JSON.parse(
-      JSON.stringify(
-        this.orders
-          .filter((o) => o.deliveryPersonId === deliveryPersonId)
-          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      )
-    );
+    const rows = this.db.prepare(`
+      SELECT * FROM orders
+      WHERE delivery_person_id = ?
+      ORDER BY created_at DESC
+    `).all(deliveryPersonId) as any[];
+
+    return rows.map((r) => this.populateOrder(r));
   }
 
-  // Delivery driver status update
   updateDeliveryOrderStatus(
     deliveryPersonId: string,
     orderId: string,
     newStatus: OrderStatus,
     reason?: string
   ): Order {
-    const orderIndex = this.orders.findIndex((o) => o.id === orderId);
-    if (orderIndex === -1) {
-      throw new Error('الطلب غير موجود');
-    }
-
-    const currentOrder = this.orders[orderIndex];
-    if (currentOrder.deliveryPersonId !== deliveryPersonId) {
+    const order = this.getOrderById(orderId);
+    if (!order) throw new Error('الطلب غير موجود');
+    if (order.deliveryPersonId !== deliveryPersonId) {
       throw new Error('هذا الطلب غير مسند إليك');
     }
 
@@ -909,78 +1318,91 @@ class DatabaseStore {
       throw new Error(`حالة غير مسموح لعامل التوصيل بتعيينها: ${newStatus}`);
     }
 
-    const updatedOrder: Order = {
-      ...currentOrder,
-      status: newStatus,
-      updatedAt: new Date().toISOString(),
-    };
+    const now = new Date().toISOString();
+    let paymentStatus = order.paymentStatus;
+    let deliveredAt = order.deliveredAt;
+    let courierFee = order.courierFeeAtDelivery;
+    let courierPaid = order.courierPaid;
 
-    // If marked delivered, update payment status to PAID (Cash collected in Algeria!)
     if (newStatus === 'DELIVERED') {
-      updatedOrder.paymentStatus = 'PAID';
-      if (!updatedOrder.deliveredAt) {
-        updatedOrder.deliveredAt = new Date().toISOString();
-      }
-      const dp = this.deliveryPeople.find((p) => p.id === deliveryPersonId);
-      const fee = dp?.deliveryFeePerOrder ?? this.restaurant.defaultCourierFeePerOrder ?? 100;
-      if (updatedOrder.courierFeeAtDelivery === undefined) {
-        updatedOrder.courierFeeAtDelivery = fee;
-      }
-      if (updatedOrder.courierPaid === undefined) {
-        updatedOrder.courierPaid = false;
-      }
+      paymentStatus = 'PAID';
+      if (!deliveredAt) deliveredAt = now;
+      const dp = this.getDeliveryPersonById(deliveryPersonId);
+      const rest = this.getRestaurant();
+      const fee = dp?.deliveryFeePerOrder ?? rest.defaultCourierFeePerOrder ?? 100;
+      if (courierFee === undefined) courierFee = fee;
+      if (courierPaid === undefined) courierPaid = false;
     }
 
-    if (newStatus === 'CANCELLED' && reason) {
-      updatedOrder.cancellationReason = reason.trim();
-    }
+    const cancellationReason = newStatus === 'CANCELLED' && reason ? reason.trim() : order.cancellationReason;
 
-    this.orders[orderIndex] = updatedOrder;
-    console.log(`[DatabaseStore] Delivery driver updated order ${updatedOrder.orderNumber} to ${newStatus}`);
-    return JSON.parse(JSON.stringify(updatedOrder));
+    this.db.prepare(`
+      UPDATE orders SET
+        status = ?,
+        payment_status = ?,
+        delivered_at = ?,
+        courier_fee_at_delivery = ?,
+        courier_paid = ?,
+        cancellation_reason = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).run(
+      newStatus,
+      paymentStatus,
+      deliveredAt || null,
+      courierFee ?? null,
+      courierPaid ? 1 : 0,
+      cancellationReason || null,
+      now,
+      orderId
+    );
+
+    return this.getOrderById(orderId)!;
   }
 
   // ==========================================
-  // Delivery Dues & Finance Management
+  // Courier Dues & Finance
   // ==========================================
 
-  // Get dues & earnings for a specific delivery driver
   getCourierDues(deliveryPersonId: string): MyCourierDues {
-    const dp = this.deliveryPeople.find((p) => p.id === deliveryPersonId);
-    if (!dp) {
-      throw new Error('عامل التوصيل غير موجود');
-    }
+    const dp = this.getDeliveryPersonById(deliveryPersonId);
+    if (!dp) throw new Error('عامل التوصيل غير موجود');
 
-    const feePerOrder = dp.deliveryFeePerOrder ?? this.restaurant.defaultCourierFeePerOrder ?? 100;
+    const rest = this.getRestaurant();
+    const feePerOrder = dp.deliveryFeePerOrder ?? rest.defaultCourierFeePerOrder ?? 100;
 
-    // ONLY DELIVERED orders count!
-    const deliveredOrders = this.orders.filter(
-      (o) => o.deliveryPersonId === deliveryPersonId && o.status === 'DELIVERED'
-    );
+    const deliveredOrders = this.db.prepare(`
+      SELECT * FROM orders
+      WHERE delivery_person_id = ? AND status = 'DELIVERED'
+      ORDER BY created_at DESC
+    `).all(deliveryPersonId) as any[];
 
     const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Algiers' }).format(new Date());
 
     const todayDelivered = deliveredOrders.filter((o) => {
-      const d = o.deliveredAt || o.updatedAt || o.createdAt;
+      const d = o.delivered_at || o.updated_at || o.created_at;
       return d.slice(0, 10) === todayStr;
     });
 
-    const unpaidOrders = deliveredOrders.filter((o) => !o.courierPaid);
+    const unpaidOrders = deliveredOrders.filter((o) => !o.courier_paid);
     const unpaidAmount = unpaidOrders.reduce(
-      (sum, o) => sum + (o.courierFeeAtDelivery ?? feePerOrder),
+      (sum, o) => sum + (o.courier_fee_at_delivery ?? feePerOrder),
       0
     );
 
-    const payouts = this.courierPayouts
-      .filter((p) => p.deliveryPersonId === deliveryPersonId)
-      .sort((a, b) => new Date(b.paidAt).getTime() - new Date(a.paidAt).getTime());
+    const payoutRows = this.db.prepare(`
+      SELECT * FROM courier_payouts
+      WHERE delivery_person_id = ?
+      ORDER BY paid_at DESC
+    `).all(deliveryPersonId) as any[];
 
+    const payouts = payoutRows.map(this.mapPayout);
     const totalPaidAmount = payouts.reduce((sum, p) => sum + p.amount, 0);
 
-    // Group history by date (YYYY-MM-DD)
-    const historyMap = new Map<string, Order[]>();
+    // Group history by date
+    const historyMap = new Map<string, any[]>();
     for (const order of deliveredOrders) {
-      const d = (order.deliveredAt || order.updatedAt || order.createdAt).slice(0, 10);
+      const d = (order.delivered_at || order.updated_at || order.created_at).slice(0, 10);
       if (!historyMap.has(d)) {
         historyMap.set(d, []);
       }
@@ -991,7 +1413,7 @@ class DatabaseStore {
       .sort((a, b) => b[0].localeCompare(a[0]))
       .map(([date, list]) => {
         const earned = list.reduce(
-          (sum, o) => sum + (o.courierFeeAtDelivery ?? feePerOrder),
+          (sum, o) => sum + (o.courier_fee_at_delivery ?? feePerOrder),
           0
         );
         return {
@@ -1000,10 +1422,10 @@ class DatabaseStore {
           earnedAmount: earned,
           orders: list.map((o) => ({
             id: o.id,
-            orderNumber: o.orderNumber,
-            deliveredAt: o.deliveredAt || o.updatedAt,
+            orderNumber: o.order_number,
+            deliveredAt: o.delivered_at || o.updated_at,
             total: o.total,
-            isPaid: !!o.courierPaid,
+            isPaid: !!o.courier_paid,
           })),
         };
       });
@@ -1013,7 +1435,7 @@ class DatabaseStore {
       today: {
         deliveredCount: todayDelivered.length,
         earnedAmount: todayDelivered.reduce(
-          (sum, o) => sum + (o.courierFeeAtDelivery ?? feePerOrder),
+          (sum, o) => sum + (o.courier_fee_at_delivery ?? feePerOrder),
           0
         ),
       },
@@ -1029,46 +1451,88 @@ class DatabaseStore {
     };
   }
 
-  // Get dues summary for Admin / Manager
-  getCourierDuesSummary(): CourierDuesSummary {
+  getCourierDuesSummary(
+    period: FinancePeriod = 'today',
+    startDate?: string,
+    endDate?: string
+  ): CourierDuesSummary {
     const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Algiers' }).format(new Date());
 
-    const allDelivered = this.orders.filter((o) => o.status === 'DELIVERED');
-    const todayDelivered = allDelivered.filter((o) => {
-      const d = o.deliveredAt || o.updatedAt || o.createdAt;
-      return d.slice(0, 10) === todayStr;
+    let rangeStart = todayStr;
+    let rangeEnd = todayStr;
+
+    if (period === 'yesterday') {
+      const yesterday = new Date(Date.now() - 86400000);
+      rangeStart = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Algiers' }).format(yesterday);
+      rangeEnd = rangeStart;
+    } else if (period === 'week') {
+      const weekAgo = new Date(Date.now() - 7 * 86400000);
+      rangeStart = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Algiers' }).format(weekAgo);
+      rangeEnd = todayStr;
+    } else if (period === 'month') {
+      rangeStart = `${todayStr.slice(0, 7)}-01`;
+      rangeEnd = todayStr;
+    } else if (period === 'custom') {
+      rangeStart = startDate ? startDate.trim().slice(0, 10) : todayStr;
+      rangeEnd = endDate ? endDate.trim().slice(0, 10) : todayStr;
+    }
+
+    const allOrders = this.getAllOrders();
+    const periodAllOrders = allOrders.filter((o) => {
+      const d = o.createdAt.slice(0, 10);
+      return d >= rangeStart && d <= rangeEnd;
     });
+
+    const allDelivered = allOrders.filter((o) => o.status === 'DELIVERED');
+    const periodDelivered = allDelivered.filter((o) => {
+      const d = (o.deliveredAt || o.updatedAt || o.createdAt).slice(0, 10);
+      return d >= rangeStart && d <= rangeEnd;
+    });
+
+    const totalRevenue = periodDelivered.reduce((sum, o) => sum + o.total, 0);
+
+    const todayDelivered = allDelivered.filter((o) => {
+      const d = (o.deliveredAt || o.updatedAt || o.createdAt).slice(0, 10);
+      return d === todayStr;
+    });
+
+    const allPayouts = (this.db.prepare('SELECT * FROM courier_payouts ORDER BY paid_at DESC').all() as any[]).map(this.mapPayout);
 
     let totalDeliveryDues = 0;
     let todayDeliveryDues = 0;
     let totalUnpaidDues = 0;
     let totalPaidDues = 0;
 
-    const couriers: CourierDueItem[] = this.deliveryPeople.map((dp) => {
-      const feePerOrder = dp.deliveryFeePerOrder ?? this.restaurant.defaultCourierFeePerOrder ?? 100;
-      const driverDelivered = allDelivered.filter((o) => o.deliveryPersonId === dp.id);
+    const deliveryPeople = this.getAllDeliveryPeople();
+    const rest = this.getRestaurant();
 
-      const driverToday = driverDelivered.filter((o) => {
-        const d = o.deliveredAt || o.updatedAt || o.createdAt;
-        return d.slice(0, 10) === todayStr;
-      });
+    const couriers: CourierDueItem[] = deliveryPeople.map((dp) => {
+      const feePerOrder = dp.deliveryFeePerOrder ?? rest.defaultCourierFeePerOrder ?? 100;
+      const driverDeliveredAll = allDelivered.filter((o) => o.deliveryPersonId === dp.id);
 
-      const driverUnpaid = driverDelivered.filter((o) => !o.courierPaid);
-      const unpaidAmount = driverUnpaid.reduce(
+      const driverPeriodDelivered = periodDelivered.filter((o) => o.deliveryPersonId === dp.id);
+      const periodEarned = driverPeriodDelivered.reduce(
         (sum, o) => sum + (o.courierFeeAtDelivery ?? feePerOrder),
         0
       );
 
-      const driverPayouts = this.courierPayouts.filter((p) => p.deliveryPersonId === dp.id);
-      const paidAmount = driverPayouts.reduce((sum, p) => sum + p.amount, 0);
-      const totalEarned = paidAmount + unpaidAmount;
-
+      const driverToday = todayDelivered.filter((o) => o.deliveryPersonId === dp.id);
       const driverTodayDues = driverToday.reduce(
         (sum, o) => sum + (o.courierFeeAtDelivery ?? feePerOrder),
         0
       );
 
-      totalDeliveryDues += totalEarned;
+      const driverUnpaid = driverDeliveredAll.filter((o) => !o.courierPaid);
+      const unpaidAmount = driverUnpaid.reduce(
+        (sum, o) => sum + (o.courierFeeAtDelivery ?? feePerOrder),
+        0
+      );
+
+      const driverPayouts = allPayouts.filter((p) => p.deliveryPersonId === dp.id);
+      const paidAmount = driverPayouts.reduce((sum, p) => sum + p.amount, 0);
+      const totalEarned = paidAmount + unpaidAmount;
+
+      totalDeliveryDues += periodEarned;
       todayDeliveryDues += driverTodayDues;
       totalUnpaidDues += unpaidAmount;
       totalPaidDues += paidAmount;
@@ -1082,8 +1546,10 @@ class DatabaseStore {
         deliveryPersonName: dp.name,
         phone: dp.phone,
         feePerOrder,
+        periodDeliveredCount: driverPeriodDelivered.length,
+        periodEarned,
         todayDeliveredCount: driverToday.length,
-        totalDeliveredCount: driverDelivered.length,
+        totalDeliveredCount: driverDeliveredAll.length,
         unpaidDeliveredCount: driverUnpaid.length,
         unpaidAmount,
         paidAmount,
@@ -1093,69 +1559,339 @@ class DatabaseStore {
     });
 
     return {
+      period,
+      startDate: rangeStart,
+      endDate: rangeEnd,
+      totalOrdersCount: periodAllOrders.length,
+      totalRevenue,
       todayDeliveredCount: todayDelivered.length,
       todayDeliveryDues,
-      deliveredOrdersCount: allDelivered.length,
+      deliveredOrdersCount: periodDelivered.length,
       totalDeliveryDues,
       unpaidDues: totalUnpaidDues,
       paidDues: totalPaidDues,
       couriers,
-      recentPayouts: [...this.courierPayouts].sort(
-        (a, b) => new Date(b.paidAt).getTime() - new Date(a.paidAt).getTime()
-      ),
+      recentPayouts: allPayouts,
+      deliveredOrders: periodDelivered,
     };
   }
 
-  // Record payout to courier
   recordCourierPayout(deliveryPersonId: string, notes?: string): CourierPayout {
-    const dp = this.deliveryPeople.find((p) => p.id === deliveryPersonId);
-    if (!dp) {
-      throw new Error('عامل التوصيل غير موجود');
-    }
+    const dp = this.getDeliveryPersonById(deliveryPersonId);
+    if (!dp) throw new Error('عامل التوصيل غير موجود');
 
-    const feePerOrder = dp.deliveryFeePerOrder ?? this.restaurant.defaultCourierFeePerOrder ?? 100;
+    const rest = this.getRestaurant();
+    const feePerOrder = dp.deliveryFeePerOrder ?? rest.defaultCourierFeePerOrder ?? 100;
 
-    const unpaidOrders = this.orders.filter(
-      (o) => o.deliveryPersonId === deliveryPersonId && o.status === 'DELIVERED' && !o.courierPaid
-    );
+    const unpaidRows = this.db.prepare(`
+      SELECT * FROM orders
+      WHERE delivery_person_id = ? AND status = 'DELIVERED' AND courier_paid = 0
+    `).all(deliveryPersonId) as any[];
 
-    if (unpaidOrders.length === 0) {
+    if (unpaidRows.length === 0) {
       throw new Error('لا توجد مستحقات معلقة غير مدفوعة لهذا المندوب لتسويتها');
     }
 
-    const amount = unpaidOrders.reduce(
-      (sum, o) => sum + (o.courierFeeAtDelivery ?? feePerOrder),
+    const amount = unpaidRows.reduce(
+      (sum, o) => sum + (o.courier_fee_at_delivery ?? feePerOrder),
       0
     );
 
+    const payoutId = `pay-${Date.now().toString().slice(-6)}`;
+    const now = new Date().toISOString();
+    const orderIds = unpaidRows.map((o) => o.id);
+
     const payout: CourierPayout = {
-      id: `pay-${Date.now().toString().slice(-6)}`,
-      restaurantId: this.restaurant.id,
+      id: payoutId,
+      restaurantId: rest.id,
       deliveryPersonId: dp.id,
       deliveryPersonName: dp.name,
-      ordersCount: unpaidOrders.length,
-      orderIds: unpaidOrders.map((o) => o.id),
+      ordersCount: unpaidRows.length,
+      orderIds,
       amount,
       feePerOrder,
       status: 'PAID',
-      paidAt: new Date().toISOString(),
+      paidAt: now,
       notes: notes?.trim() || 'تسوية مستحقات التوصيل',
-      createdAt: new Date().toISOString(),
+      createdAt: now,
     };
 
-    for (const order of unpaidOrders) {
-      order.courierPaid = true;
-      order.courierPayoutId = payout.id;
-      if (order.courierFeeAtDelivery === undefined) {
-        order.courierFeeAtDelivery = feePerOrder;
+    this.db.exec('BEGIN TRANSACTION;');
+    try {
+      // 1. Insert payout record
+      const stmt = this.db.prepare(`
+        INSERT INTO courier_payouts (
+          id, restaurant_id, delivery_person_id, delivery_person_name,
+          orders_count, order_ids_json, amount, fee_per_order, status,
+          paid_at, notes, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      stmt.run(
+        payout.id,
+        payout.restaurantId,
+        payout.deliveryPersonId,
+        payout.deliveryPersonName,
+        payout.ordersCount,
+        JSON.stringify(payout.orderIds),
+        payout.amount,
+        payout.feePerOrder,
+        payout.status,
+        payout.paidAt,
+        payout.notes || null,
+        payout.createdAt
+      );
+
+      // 2. Mark orders as paid
+      const updateOrderStmt = this.db.prepare(`
+        UPDATE orders SET
+          courier_paid = 1,
+          courier_payout_id = ?,
+          courier_fee_at_delivery = COALESCE(courier_fee_at_delivery, ?),
+          updated_at = ?
+        WHERE id = ?
+      `);
+
+      for (const orderId of orderIds) {
+        updateOrderStmt.run(payout.id, feePerOrder, now, orderId);
       }
-      order.updatedAt = new Date().toISOString();
+
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
     }
 
-    this.courierPayouts.push(payout);
-    console.log(`[DatabaseStore] Recorded payout ${payout.id} of ${amount} DZD to ${dp.name}`);
-    return JSON.parse(JSON.stringify(payout));
+    console.log(`[SQLiteDatabaseStore] Recorded payout ${payout.id} of ${amount} DZD to ${dp.name} in SQLite`);
+    return payout;
+  }
+
+  // ==========================================
+  // Helper Mappers
+  // ==========================================
+
+  private mapRestaurant(row: any): Restaurant {
+    return {
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      description: row.description || undefined,
+      logoUrl: row.logo_url || undefined,
+      coverImageUrl: row.cover_image_url || undefined,
+      phone: row.phone,
+      email: row.email || undefined,
+      wilaya: row.wilaya,
+      commune: row.commune,
+      address: row.address,
+      currency: row.currency,
+      currencyCode: row.currency_code,
+      isOpen: row.is_open === 1,
+      openingHours: row.opening_hours || undefined,
+      timezone: row.timezone,
+      defaultDeliveryFee: row.default_delivery_fee,
+      minOrderAmount: row.min_order_amount,
+      defaultCourierFeePerOrder: row.default_courier_fee_per_order ?? 100,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mapDeliveryZone(row: any): DeliveryZone {
+    return {
+      id: row.id,
+      restaurantId: row.restaurant_id,
+      wilaya: row.wilaya,
+      wilayaCode: row.wilaya_code || undefined,
+      commune: row.commune,
+      deliveryFee: row.delivery_fee,
+      estimatedMinutes: row.estimated_minutes,
+      minOrderAmount: row.min_order_amount,
+      isActive: row.is_active === 1,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mapCategory(row: any): Category {
+    return {
+      id: row.id,
+      restaurantId: row.restaurant_id,
+      name: row.name,
+      description: row.description || undefined,
+      imageUrl: row.image_url || undefined,
+      icon: row.icon || undefined,
+      displayOrder: row.display_order,
+      isActive: row.is_active === 1,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mapProduct(row: any): Product {
+    return {
+      id: row.id,
+      restaurantId: row.restaurant_id,
+      categoryId: row.category_id,
+      name: row.name,
+      description: row.description,
+      price: row.price,
+      imageUrl: row.image_url,
+      isAvailable: row.is_available === 1,
+      isFeatured: row.is_featured === 1,
+      displayOrder: row.display_order,
+      preparationTimeMinutes: row.preparation_time_minutes || undefined,
+      calories: row.calories || undefined,
+      tags: row.tags || undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mapUser(row: any): User {
+    return {
+      id: row.id,
+      restaurantId: row.restaurant_id,
+      name: row.name,
+      email: row.email,
+      username: row.username,
+      passwordHash: row.password_hash,
+      phone: row.phone || undefined,
+      role: row.role as any,
+      isActive: row.is_active === 1,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mapDeliveryPerson(row: any): DeliveryPerson {
+    return {
+      id: row.id,
+      restaurantId: row.restaurant_id,
+      userId: row.user_id,
+      name: row.name,
+      phone: row.phone,
+      email: row.email || undefined,
+      isActive: row.is_active === 1,
+      isAvailable: row.is_available === 1,
+      deliveryFeePerOrder: row.delivery_fee_per_order,
+      vehicleType: row.vehicle_type || 'توصيل',
+      vehiclePlateNumber: row.vehicle_plate_number || undefined,
+      assignedOrdersCount: 0,
+      activeOrdersCount: 0,
+      completedOrdersCount: 0,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mapPayout(row: any): CourierPayout {
+    let orderIds: string[] = [];
+    try {
+      orderIds = JSON.parse(row.order_ids_json);
+    } catch {
+      orderIds = [];
+    }
+
+    return {
+      id: row.id,
+      restaurantId: row.restaurant_id,
+      deliveryPersonId: row.delivery_person_id,
+      deliveryPersonName: row.delivery_person_name,
+      ordersCount: row.orders_count,
+      orderIds,
+      amount: row.amount,
+      feePerOrder: row.fee_per_order,
+      status: 'PAID',
+      paidAt: row.paid_at,
+      notes: row.notes || undefined,
+      createdAt: row.created_at,
+    };
+  }
+
+  private populateOrder(row: any): Order {
+    // Fetch items
+    const itemRows = this.db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(row.id) as any[];
+    const items: OrderItem[] = itemRows.map((it) => ({
+      id: it.id,
+      orderId: it.order_id,
+      productId: it.product_id || undefined,
+      productName: it.product_name,
+      unitPrice: it.unit_price,
+      quantity: it.quantity,
+      totalPrice: it.total_price,
+      notes: it.notes || undefined,
+      createdAt: it.created_at,
+    }));
+
+    // Fetch delivery person summary if assigned
+    let deliveryPerson: DeliveryPersonSummary | undefined = undefined;
+    if (row.delivery_person_id) {
+      const dpRow = this.db.prepare('SELECT * FROM delivery_people WHERE id = ?').get(row.delivery_person_id) as any;
+      if (dpRow) {
+        deliveryPerson = {
+          id: dpRow.id,
+          name: dpRow.name,
+          phone: dpRow.phone,
+          vehicleType: dpRow.vehicle_type || undefined,
+          vehiclePlateNumber: dpRow.vehicle_plate_number || undefined,
+          isAvailable: dpRow.is_available === 1,
+        };
+      }
+    }
+
+    return {
+      id: row.id,
+      orderNumber: row.order_number,
+      restaurantId: row.restaurant_id,
+      customerId: row.customer_id || undefined,
+      status: row.status as OrderStatus,
+      orderType: row.order_type as any,
+      paymentMethod: row.payment_method as any,
+      paymentStatus: row.payment_status as any,
+      subtotal: row.subtotal,
+      deliveryFee: row.delivery_fee,
+      total: row.total,
+      customerName: row.customer_name,
+      customerPhone: row.customer_phone,
+      wilaya: row.wilaya,
+      daira: row.daira || undefined,
+      commune: row.commune,
+      neighborhood: row.neighborhood,
+      address: row.address,
+      deliveryAddress: row.delivery_address || undefined,
+      notes: row.notes || undefined,
+      deliveryPersonId: row.delivery_person_id || undefined,
+      deliveryPerson,
+      cancellationReason: row.cancellation_reason || undefined,
+      deliveredAt: row.delivered_at || undefined,
+      courierPaid: row.courier_paid === 1,
+      courierPayoutId: row.courier_payout_id || undefined,
+      courierFeeAtDelivery: row.courier_fee_at_delivery ?? undefined,
+      items,
+      idempotencyKey: row.idempotency_key || undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private populateDeliveryPersonStats(dp: DeliveryPerson): DeliveryPerson {
+    const orders = this.db.prepare(`
+      SELECT status FROM orders WHERE delivery_person_id = ?
+    `).all(dp.id) as any[];
+
+    const assignedCount = orders.length;
+    const activeCount = orders.filter((o) =>
+      ['CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY'].includes(o.status)
+    ).length;
+    const completedCount = orders.filter((o) => o.status === 'DELIVERED').length;
+
+    return {
+      ...dp,
+      assignedOrdersCount: assignedCount,
+      activeOrdersCount: activeCount,
+      completedOrdersCount: completedCount,
+    };
   }
 }
 
-export const dbStore = new DatabaseStore();
+// Export singleton instance as dbStore
+export const dbStore = new SQLiteDatabaseStore();

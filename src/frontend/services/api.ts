@@ -13,6 +13,7 @@ import {
   CourierDuesSummary,
   CourierPayout,
   MyCourierDues,
+  FinancePeriod,
 } from '../types/index.ts';
 
 const BASE_URL = '/api';
@@ -81,6 +82,32 @@ export const api = {
     return json.data;
   },
 
+  async createCategory(
+    data: {
+      name: string;
+      description?: string;
+      icon?: string;
+      imageUrl?: string;
+      displayOrder?: number;
+      isActive?: boolean;
+    },
+    token: string
+  ): Promise<Category> {
+    const res = await fetch(`${BASE_URL}/categories`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(data),
+    });
+    const json: ApiResponse<Category> = await res.json();
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || 'فشل في إنشاء التصنيف');
+    }
+    return json.data;
+  },
+
   // Products
   async getProducts(params?: {
     categoryId?: string;
@@ -107,6 +134,37 @@ export const api = {
     const json: ApiResponse<Product> = await res.json();
     if (!res.ok || !json.success) {
       throw new Error(json.error || 'فشل في تحميل تفاصيل الوجبة');
+    }
+    return json.data;
+  },
+
+  async createProduct(
+    data: {
+      categoryId: string;
+      name: string;
+      description: string;
+      price: number;
+      imageUrl?: string;
+      isAvailable?: boolean;
+      isFeatured?: boolean;
+      displayOrder?: number;
+      preparationTimeMinutes?: number;
+      calories?: number;
+      tags?: string;
+    },
+    token: string
+  ): Promise<Product> {
+    const res = await fetch(`${BASE_URL}/products`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(data),
+    });
+    const json: ApiResponse<Product> = await res.json();
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || 'فشل في إضافة الوجبة');
     }
     return json.data;
   },
@@ -264,6 +322,20 @@ export const api = {
     return json.data;
   },
 
+  async deleteDeliveryStaff(id: string, token: string): Promise<DeliveryPerson> {
+    const res = await fetch(`${BASE_URL}/admin/delivery-staff/${id}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const json: ApiResponse<DeliveryPerson> = await res.json();
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || 'فشل في حذف مسؤول التوصيل');
+    }
+    return json.data;
+  },
+
   // Delivery Driver Portal (Driver Role)
   async getDeliveryProfile(token: string): Promise<{
     driver: DeliveryPerson;
@@ -348,8 +420,19 @@ export const api = {
   },
 
   // Dues & Finance Management (المستحقات والمداخيل)
-  async getCourierDuesSummary(token: string): Promise<CourierDuesSummary> {
-    const res = await fetch(`${BASE_URL}/admin/delivery-staff/dues/summary`, {
+  async getCourierDuesSummary(
+    token: string,
+    period?: FinancePeriod,
+    startDate?: string,
+    endDate?: string
+  ): Promise<CourierDuesSummary> {
+    const params = new URLSearchParams();
+    if (period) params.append('period', period);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+
+    const res = await fetch(`${BASE_URL}/admin/delivery-staff/dues/summary${qs}`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -395,13 +478,18 @@ export const api = {
   },
 
   // Auth
-  async login(email: string, password: string): Promise<{ token: string; user: SafeUser }> {
+  async login(emailOrUsername: string, password: string): Promise<{ token: string; user: SafeUser }> {
     const res = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({
+        email: emailOrUsername,
+        username: emailOrUsername,
+        identifier: emailOrUsername,
+        password,
+      }),
     });
     const json: ApiResponse<{ token: string; user: SafeUser }> = await res.json();
     if (!res.ok || !json.success) {

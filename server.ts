@@ -13,7 +13,8 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  // Dev server must run on 3000 behind Nginx (port 8080)
+  const PORT = process.env.APP_PORT ? parseInt(process.env.APP_PORT, 10) : 3000;
   const isProduction = process.env.NODE_ENV === 'production';
 
   // Parse JSON bodies
@@ -33,6 +34,11 @@ async function startServer() {
 
   // Initialize DB and Seed Data
   await dbStore.init();
+
+  // Block any web access to database and backup files
+  app.use(['/data', '/backups', '/.backup'], (_req, res) => {
+    res.status(403).json({ success: false, error: 'Access forbidden' });
+  });
 
   // Mount API endpoints
   app.use('/api', apiRouter);
