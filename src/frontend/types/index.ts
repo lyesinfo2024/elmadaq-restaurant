@@ -289,7 +289,7 @@ export interface CreateOrderInput {
   daira?: string;
   commune: string;
   neighborhood: string;
-  address: string;
+  address?: string;
   notes?: string;
   deliveryZoneId: string;
   items: CreateOrderItemInput[];

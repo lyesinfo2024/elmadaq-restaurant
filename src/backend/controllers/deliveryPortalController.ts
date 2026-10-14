@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/authMiddleware.ts';
 import { dbStore } from '../db/index.ts';
 import { OrderStatus } from '../types/index.ts';
+import { orderEventsHub } from '../services/orderEventsHub.ts';
 
 // GET /api/delivery/profile - جلب الملف الشخصي لعامل التوصيل مع إحصائيات اليوم
 export async function getMyProfile(req: AuthenticatedRequest, res: Response) {
@@ -152,6 +153,21 @@ export async function updateMyOrderStatus(req: AuthenticatedRequest, res: Respon
       });
     }
 
+    const order = dbStore.getOrderById(id);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        error: 'الطلب غير موجود',
+      });
+    }
+
+    if (order.deliveryPersonId !== driver.id) {
+      return res.status(403).json({
+        success: false,
+        error: 'غير مصرح: هذا الطلب غير مسند إليك ولا تملك صلاحية تعديل حالته',
+      });
+    }
+
     if (!status) {
       return res.status(400).json({
         success: false,
@@ -159,7 +175,11 @@ export async function updateMyOrderStatus(req: AuthenticatedRequest, res: Respon
       });
     }
 
+    const previousStatus = order.status;
     const updated = dbStore.updateDeliveryOrderStatus(driver.id, id, status as OrderStatus, reason);
+
+    // Realtime notification for Admin and Customer
+    orderEventsHub.notifyOrderStatusUpdated(updated, previousStatus, 'DELIVERY');
 
     let statusMessage = 'تم تحديث حالة الطلب بنجاح';
     if (status === 'OUT_FOR_DELIVERY') {

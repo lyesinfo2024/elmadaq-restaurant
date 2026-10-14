@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { DatabaseSync } from 'node:sqlite';
 import bcrypt from 'bcryptjs';
-import {
+import type {
   Restaurant,
   Category,
   Product,
@@ -29,6 +29,7 @@ import {
   INITIAL_PRODUCTS,
   INITIAL_DELIVERY_ZONES,
   INITIAL_USERS_RAW,
+  INITIAL_DELIVERY_PEOPLE,
 } from './seedData.ts';
 import { isValidAlgerianPhone } from '../middleware/validationMiddleware.ts';
 
@@ -326,7 +327,7 @@ export class SQLiteDatabaseStore {
 
     // 3. Categories
     const catCount = (this.db.prepare('SELECT COUNT(*) as count FROM categories').get() as any).count;
-    if (catCount === 0) {
+    if (catCount === 0 && INITIAL_CATEGORIES.length > 0) {
       const stmt = this.db.prepare(`
         INSERT INTO categories (
           id, restaurant_id, name, description, image_url, icon,
@@ -351,7 +352,7 @@ export class SQLiteDatabaseStore {
 
     // 4. Products
     const prodCount = (this.db.prepare('SELECT COUNT(*) as count FROM products').get() as any).count;
-    if (prodCount === 0) {
+    if (prodCount === 0 && INITIAL_PRODUCTS.length > 0) {
       const stmt = this.db.prepare(`
         INSERT INTO products (
           id, restaurant_id, category_id, name, description, price,
@@ -380,19 +381,19 @@ export class SQLiteDatabaseStore {
       }
     }
 
-    // 5. Admin & Manager Users (only if not already created!)
-    const userCount = (this.db.prepare('SELECT COUNT(*) as count FROM users').get() as any).count;
-    if (userCount === 0) {
-      const stmt = this.db.prepare(`
-        INSERT INTO users (
-          id, restaurant_id, name, email, username, password_hash,
-          phone, role, is_active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      const now = new Date().toISOString();
-      for (const u of INITIAL_USERS_RAW) {
+    // 5. Admin, Manager & Courier Users (ensure all initial users exist)
+    const userStmt = this.db.prepare(`
+      INSERT INTO users (
+        id, restaurant_id, name, email, username, password_hash,
+        phone, role, is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const now = new Date().toISOString();
+    for (const u of INITIAL_USERS_RAW) {
+      const existingUser = this.db.prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1').get(u.email);
+      if (!existingUser) {
         const passwordHash = await bcrypt.hash(u.passwordPlain, 10);
-        stmt.run(
+        userStmt.run(
           u.id,
           u.restaurantId,
           u.name,
@@ -404,6 +405,35 @@ export class SQLiteDatabaseStore {
           u.isActive ? 1 : 0,
           now,
           now
+        );
+      }
+    }
+
+    // 6. Initial Delivery People (if not present)
+    const dpStmt = this.db.prepare(`
+      INSERT INTO delivery_people (
+        id, restaurant_id, user_id, name, phone, email,
+        is_active, is_available, delivery_fee_per_order, vehicle_type,
+        vehicle_plate_number, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const dp of INITIAL_DELIVERY_PEOPLE) {
+      const existingDp = this.db.prepare('SELECT id FROM delivery_people WHERE id = ? OR user_id = ? LIMIT 1').get(dp.id, dp.userId);
+      if (!existingDp) {
+        dpStmt.run(
+          dp.id,
+          dp.restaurantId,
+          dp.userId,
+          dp.name,
+          dp.phone,
+          dp.email || null,
+          dp.isActive ? 1 : 0,
+          dp.isAvailable ? 1 : 0,
+          dp.deliveryFeePerOrder,
+          dp.vehicleType || 'توصيل',
+          dp.vehiclePlateNumber || null,
+          dp.createdAt,
+          dp.updatedAt
         );
       }
     }
@@ -556,6 +586,21 @@ export class SQLiteDatabaseStore {
     );
 
     return cat;
+  }
+
+  deleteCategory(id: string): boolean {
+    const cat = this.getCategoryById(id);
+    if (!cat) return false;
+    // Unlink product_id from order_items for all products in this category to preserve past orders
+    const prods = this.db.prepare('SELECT id FROM products WHERE category_id = ?').all(id) as any[];
+    for (const p of prods) {
+      this.db.prepare('UPDATE order_items SET product_id = NULL WHERE product_id = ?').run(p.id);
+    }
+    // Delete products under this category
+    this.db.prepare('DELETE FROM products WHERE category_id = ?').run(id);
+    // Delete the category itself
+    const res = this.db.prepare('DELETE FROM categories WHERE id = ?').run(id);
+    return res.changes > 0;
   }
 
   // ==========================================
@@ -713,6 +758,15 @@ export class SQLiteDatabaseStore {
     return updated;
   }
 
+  deleteProduct(id: string): boolean {
+    const prod = this.getProductById(id);
+    if (!prod) return false;
+    // Unlink product_id from order_items safely so historical orders are preserved
+    this.db.prepare('UPDATE order_items SET product_id = NULL WHERE product_id = ?').run(id);
+    const res = this.db.prepare('DELETE FROM products WHERE id = ?').run(id);
+    return res.changes > 0;
+  }
+
   // ==========================================
   // User Queries & Authentication
   // ==========================================
@@ -774,10 +828,7 @@ export class SQLiteDatabaseStore {
       throw new Error('يرجى إدخال اسم الزبون الكريم');
     }
     if (!input.customerPhone || !isValidAlgerianPhone(input.customerPhone)) {
-      throw new Error('رقم الهاتف غير صالح، يجب أن يكون رقم جزائري يبدأ بـ 05 أو 06 أو 07 ويتكون من 10 أرقام');
-    }
-    if (!input.address || typeof input.address !== 'string' || input.address.trim().length === 0) {
-      throw new Error('يرجى تحديد عنوان التوصيل بالتفصيل');
+      throw new Error('رقم هاتف جزائري غير صالح، يجب أن يبدأ بـ 05 أو 06 أو 07 ويتكون من 10 أرقام');
     }
     if (!input.items || !Array.isArray(input.items) || input.items.length === 0) {
       throw new Error('سلة الطلب فارغة، يرجى اختيار وجبة واحدة على الأقل');
@@ -890,8 +941,8 @@ export class SQLiteDatabaseStore {
         input.daira?.trim() || null,
         input.commune.trim(),
         input.neighborhood.trim(),
-        input.address.trim(),
-        input.address.trim(),
+        input.address?.trim() || input.neighborhood.trim(),
+        input.address?.trim() || input.neighborhood.trim() || null,
         input.notes?.trim() || null,
         input.idempotencyKey || null,
         now,

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { RestaurantProvider, useRestaurant } from './frontend/context/RestaurantContext.tsx';
 import { CartProvider } from './frontend/context/CartContext.tsx';
 import { AuthProvider, useAuth } from './frontend/context/AuthContext.tsx';
+import { NotificationProvider, useNotification } from './frontend/context/NotificationContext.tsx';
 import { Category, Product, Order } from './frontend/types/index.ts';
 import { api } from './frontend/services/api.ts';
 import { Header } from './frontend/components/Header.tsx';
@@ -17,6 +18,8 @@ import { OrderTrackerModal } from './frontend/components/OrderTrackerModal.tsx';
 import { AdminLoginModal } from './frontend/components/AdminLoginModal.tsx';
 import { AdminDashboard } from './frontend/components/AdminDashboard.tsx';
 import { DeliveryDashboard } from './frontend/components/DeliveryDashboard.tsx';
+import { NotificationToast } from './frontend/components/NotificationToast.tsx';
+import { NotificationCenterModal } from './frontend/components/NotificationCenterModal.tsx';
 import { formatAlgerianPhone } from './frontend/utils/formatters.ts';
 import { Utensils, Sparkles, Phone, MapPin, ShieldCheck, Heart, Banknote, Search, Bike } from 'lucide-react';
 
@@ -44,6 +47,28 @@ function RestaurantApp() {
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
   const [isSuccessOpen, setIsSuccessOpen] = useState(false);
   const [isTrackerOpen, setIsTrackerOpen] = useState(false);
+  const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
+
+  const { setNavigateHandler } = useNotification();
+
+  useEffect(() => {
+    // When an order notification is clicked, route to the tracker or admin dashboard
+    setNavigateHandler((orderId: string, orderNumber: string) => {
+      if (isAuthenticated && !isDelivery) {
+        setIsDashboardOpen(true);
+      } else {
+        // Open tracker modal for customers or delivery staff
+        if (orderNumber) {
+          api.trackOrder(orderNumber).then((ord) => {
+            setCreatedOrder(ord);
+            setIsTrackerOpen(true);
+          }).catch(() => {
+            setIsTrackerOpen(true);
+          });
+        }
+      }
+    });
+  }, [isAuthenticated, isDelivery, setNavigateHandler]);
 
   // Fetch categories and products from REST API
   const loadMenuData = async () => {
@@ -131,6 +156,7 @@ function RestaurantApp() {
         onOpenDashboard={() => (isDelivery ? setIsDeliveryDashboardOpen(true) : setIsDashboardOpen(true))}
         onOpenTracker={() => setIsTrackerOpen(true)}
         onOpenDelivery={() => setIsDeliveryDashboardOpen(true)}
+        onOpenNotifications={() => setIsNotificationCenterOpen(true)}
       />
 
       {/* Hero Section */}
@@ -399,6 +425,40 @@ function RestaurantApp() {
       {isDeliveryDashboardOpen && (
         <DeliveryDashboard onClose={() => setIsDeliveryDashboardOpen(false)} />
       )}
+
+      {/* Realtime Notification Toast */}
+      <NotificationToast
+        onSelectOrder={(_orderId, orderNumber) => {
+          if (isAuthenticated && !isDelivery) {
+            setIsDashboardOpen(true);
+          } else if (orderNumber) {
+            api.trackOrder(orderNumber).then((ord) => {
+              setCreatedOrder(ord);
+              setIsTrackerOpen(true);
+            }).catch(() => {
+              setIsTrackerOpen(true);
+            });
+          }
+        }}
+      />
+
+      {/* Notification Center Modal */}
+      <NotificationCenterModal
+        isOpen={isNotificationCenterOpen}
+        onClose={() => setIsNotificationCenterOpen(false)}
+        onSelectOrder={(_orderId, orderNumber) => {
+          if (isAuthenticated && !isDelivery) {
+            setIsDashboardOpen(true);
+          } else if (orderNumber) {
+            api.trackOrder(orderNumber).then((ord) => {
+              setCreatedOrder(ord);
+              setIsTrackerOpen(true);
+            }).catch(() => {
+              setIsTrackerOpen(true);
+            });
+          }
+        }}
+      />
     </div>
   );
 }
@@ -408,7 +468,9 @@ export default function App() {
     <RestaurantProvider>
       <CartProvider>
         <AuthProvider>
-          <RestaurantApp />
+          <NotificationProvider>
+            <RestaurantApp />
+          </NotificationProvider>
         </AuthProvider>
       </CartProvider>
     </RestaurantProvider>

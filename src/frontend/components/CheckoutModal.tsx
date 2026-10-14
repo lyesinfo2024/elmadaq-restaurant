@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useCart } from '../context/CartContext.tsx';
 import { useRestaurant } from '../context/RestaurantContext.tsx';
-import { DeliveryZone, Order } from '../types/index.ts';
+import { DeliveryZone, Order, CreateOrderInput } from '../types/index.ts';
 import { api } from '../services/api.ts';
 import { formatDZD, isValidAlgerianPhone } from '../utils/formatters.ts';
 import {
@@ -25,6 +25,9 @@ interface CheckoutModalProps {
   onOrderSuccess: (order: Order) => void;
 }
 
+// List of available communes for the commune field
+const COMMUNES = ['إليزي'];
+
 export function CheckoutModal({ isOpen, onClose, onOrderSuccess }: CheckoutModalProps) {
   const { items, subtotal, clearCart } = useCart();
   const { restaurant } = useRestaurant();
@@ -36,11 +39,9 @@ export function CheckoutModal({ isOpen, onClose, onOrderSuccess }: CheckoutModal
   // Form Fields
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
-  const [wilaya, setWilaya] = useState('الجزائر العاصمة (16)');
-  const [daira, setDaira] = useState('');
-  const [commune, setCommune] = useState('');
+  const [wilaya, setWilaya] = useState('إليزي');
+  const [commune, setCommune] = useState('إليزي');
   const [neighborhood, setNeighborhood] = useState('');
-  const [address, setAddress] = useState('');
   const [notes, setNotes] = useState('');
   const [selectedZoneId, setSelectedZoneId] = useState('');
 
@@ -60,7 +61,7 @@ export function CheckoutModal({ isOpen, onClose, onOrderSuccess }: CheckoutModal
           setDeliveryZones(zones);
           if (zones.length > 0) {
             setSelectedZoneId(zones[0].id);
-            setCommune(zones[0].commune);
+            setCommune('إليزي');
             setWilaya(zones[0].wilaya);
           }
         })
@@ -76,12 +77,11 @@ export function CheckoutModal({ isOpen, onClose, onOrderSuccess }: CheckoutModal
     }
   }, [isOpen]);
 
-  // When zone changes, update commune
+  // When zone changes, update wilaya while keeping commune as selected
   const handleZoneChange = (zoneId: string) => {
     setSelectedZoneId(zoneId);
     const z = deliveryZones.find((item) => item.id === zoneId);
     if (z) {
-      setCommune(z.commune);
       setWilaya(z.wilaya);
     }
   };
@@ -115,13 +115,13 @@ export function CheckoutModal({ isOpen, onClose, onOrderSuccess }: CheckoutModal
       return false;
     }
 
-    if (!neighborhood.trim()) {
-      setError('يرجى إدخال الحي أو المنطقة');
+    if (!commune.trim()) {
+      setError('يرجى اختيار البلدية');
       return false;
     }
 
-    if (!address.trim()) {
-      setError('يرجى إدخال العنوان التفصيلي (الشارع، رقم العمارة، الطابق، رقم الباب)');
+    if (!neighborhood.trim()) {
+      setError('يرجى إدخال الحي أو المنطقة');
       return false;
     }
 
@@ -148,14 +148,12 @@ export function CheckoutModal({ isOpen, onClose, onOrderSuccess }: CheckoutModal
     setError(null);
 
     try {
-      const orderPayload = {
+      const orderPayload: CreateOrderInput = {
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim(),
         wilaya: wilaya.trim(),
-        daira: daira.trim() || undefined,
         commune: commune.trim(),
         neighborhood: neighborhood.trim(),
-        address: address.trim(),
         notes: notes.trim() || undefined,
         deliveryZoneId: selectedZoneId,
         items: items.map((item) => ({
@@ -287,7 +285,7 @@ export function CheckoutModal({ isOpen, onClose, onOrderSuccess }: CheckoutModal
             <div>
               <label className="block text-xs font-bold text-stone-700 mb-1.5 flex items-center gap-1.5">
                 <MapPin className="w-3.5 h-3.5 text-amber-600" />
-                <span>بلدية ومنطقة التوصيل *</span>
+                <span>منطقة التوصيل *</span>
               </label>
               {loadingZones ? (
                 <div className="h-10 bg-stone-100 rounded-xl animate-pulse" />
@@ -306,7 +304,7 @@ export function CheckoutModal({ isOpen, onClose, onOrderSuccess }: CheckoutModal
               )}
             </div>
 
-            {/* Wilaya & Daira */}
+            {/* Wilaya & Commune */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-bold text-stone-700 mb-1.5">الولاية *</label>
@@ -320,18 +318,22 @@ export function CheckoutModal({ isOpen, onClose, onOrderSuccess }: CheckoutModal
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1.5">الدائرة (اختياري)</label>
-                <input
-                  type="text"
-                  value={daira}
-                  onChange={(e) => setDaira(e.target.value)}
-                  placeholder="مثال: سيدي امحمد، باب الواد..."
-                  className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:border-amber-500 focus:bg-white"
-                />
+                <label className="block text-xs font-bold text-stone-700 mb-1.5">البلدية *</label>
+                <select
+                  value={commune}
+                  onChange={(e) => setCommune(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:border-amber-500 focus:bg-white font-medium"
+                >
+                  {COMMUNES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
-            {/* Neighborhood & Address */}
+            {/* Neighborhood */}
             <div>
               <label className="block text-xs font-bold text-stone-700 mb-1.5">الحي / المنطقة *</label>
               <input
@@ -340,18 +342,6 @@ export function CheckoutModal({ isOpen, onClose, onOrderSuccess }: CheckoutModal
                 value={neighborhood}
                 onChange={(e) => setNeighborhood(e.target.value)}
                 placeholder="مثال: حي 500 مسكن، حي الشهداء، قرب البريد المركزي..."
-                className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:border-amber-500 focus:bg-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-stone-700 mb-1.5">العنوان التفصيلي *</label>
-              <input
-                type="text"
-                required
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="اسم الشارع، رقم العمارة، الطابق، رقم الشقة أو الباب..."
                 className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:border-amber-500 focus:bg-white"
               />
             </div>
@@ -456,9 +446,9 @@ export function CheckoutModal({ isOpen, onClose, onOrderSuccess }: CheckoutModal
                   <span className="font-mono font-bold" dir="ltr">{customerPhone}</span>
                 </div>
                 <div className="col-span-2">
-                  <span className="text-stone-400 block text-[11px]">منطقة التوصيل والعنوان:</span>
+                  <span className="text-stone-400 block text-[11px]">منطقة التوصيل والحي:</span>
                   <span className="font-medium">
-                    {commune}، {wilaya} — {neighborhood}، {address}
+                    {commune}، {wilaya} — {neighborhood}
                   </span>
                 </div>
                 {notes && (

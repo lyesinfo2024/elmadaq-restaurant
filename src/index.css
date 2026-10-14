@@ -8,3 +8,95 @@
 body {
   font-family: var(--font-cairo);
 }
+
+/* =========================================================================
+   Thermal Printer Styling (Xprinter 80mm & 58mm)
+   ========================================================================= */
+@media print {
+  @page {
+    size: portrait;
+    margin: 0;
+  }
+
+  html, body {
+    background-color: #ffffff !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Completely hide React root app so no dashboard elements ever print */
+  body.is-printing-receipt #root {
+    display: none !important;
+  }
+
+  /* Hide anything else in body that is not the thermal receipt portal */
+  body.is-printing-receipt > *:not(#thermal-receipt-portal) {
+    display: none !important;
+  }
+
+  /* Display portal clean and full width without overlays */
+  #thermal-receipt-portal {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+
+  #thermal-receipt-modal-card {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+  }
+
+  #thermal-receipt-preview-wrapper {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    overflow: visible !important;
+  }
+
+  /* Hide modal buttons, backdrops, alerts, and preview controls */
+  .print-hide,
+  .print-hide * {
+    display: none !important;
+  }
+
+  /* Thermal slip printable container */
+  #thermal-receipt-printable-slip,
+  .thermal-receipt-slip {
+    display: block !important;
+    margin: 0 auto !important;
+    background-color: #ffffff !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+}

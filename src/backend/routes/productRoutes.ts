@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getProducts, getProductById, updateProduct, createProduct } from '../controllers/productController.ts';
+import { getProducts, getProductById, updateProduct, createProduct, deleteProduct } from '../controllers/productController.ts';
 import { authenticate, requireRole } from '../middleware/authMiddleware.ts';
 
 const router = Router();
@@ -15,6 +15,9 @@ router.post('/', authenticate, requireRole('ADMIN', 'MANAGER'), createProduct);
 
 // PUT /api/products/:id - تحديث الوجبة أو توفرها (للإدارة ADMIN / MANAGER)
 router.put('/:id', authenticate, requireRole('ADMIN', 'MANAGER'), updateProduct);
+
+// DELETE /api/products/:id - حذف الوجبة (للإدارة ADMIN / MANAGER)
+router.delete('/:id', authenticate, requireRole('ADMIN', 'MANAGER'), deleteProduct);
 
 export default router;
 

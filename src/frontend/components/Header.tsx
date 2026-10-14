@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { ShoppingBag, UtensilsCrossed, ShieldCheck, Menu, X, Phone, Clock, Search, Bike } from 'lucide-react';
+import { ShoppingBag, UtensilsCrossed, ShieldCheck, Menu, X, Phone, Clock, Search, Bike, Bell } from 'lucide-react';
 import { useRestaurant } from '../context/RestaurantContext.tsx';
 import { useCart } from '../context/CartContext.tsx';
 import { useAuth } from '../context/AuthContext.tsx';
+import { useNotification } from '../context/NotificationContext.tsx';
 import { formatAlgerianPhone } from '../utils/formatters.ts';
 
 interface HeaderProps {
@@ -10,12 +11,14 @@ interface HeaderProps {
   onOpenDashboard: () => void;
   onOpenTracker: () => void;
   onOpenDelivery?: () => void;
+  onOpenNotifications?: () => void;
 }
 
-export function Header({ onOpenLogin, onOpenDashboard, onOpenTracker, onOpenDelivery }: HeaderProps) {
+export function Header({ onOpenLogin, onOpenDashboard, onOpenTracker, onOpenDelivery, onOpenNotifications }: HeaderProps) {
   const { restaurant } = useRestaurant();
   const { totalItems, setIsOpen } = useCart();
   const { isAuthenticated, user, isDelivery, logout } = useAuth();
+  const { unreadCount, newOrdersUnviewedCount } = useNotification();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
@@ -102,6 +105,23 @@ export function Header({ onOpenLogin, onOpenDashboard, onOpenTracker, onOpenDeli
               )}
             </button>
 
+            {/* Notifications Bell */}
+            {onOpenNotifications && (
+              <button
+                onClick={onOpenNotifications}
+                className="relative p-2.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 transition-colors border border-stone-200 shadow-2xs"
+                title="مركز الإشعارات والتنبيهات"
+                aria-label="مركز الإشعارات"
+              >
+                <Bell className="w-5 h-5 text-stone-700" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 flex items-center justify-center min-w-5 h-5 px-1 text-[11px] font-black text-white bg-red-600 rounded-full shadow-xs animate-pulse">
+                    {unreadCount > 9 ? '+9' : unreadCount}
+                  </span>
+                )}
+              </button>
+            )}
+
             {/* Admin or Delivery Entry */}
             {isAuthenticated ? (
               <div className="flex items-center gap-2">
@@ -119,13 +139,18 @@ export function Header({ onOpenLogin, onOpenDashboard, onOpenTracker, onOpenDeli
                 ) : (
                   <button
                     onClick={onOpenDashboard}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-sm font-bold transition-all shadow-sm active:scale-95"
+                    className="relative flex items-center gap-2 px-4 py-2.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-sm font-bold transition-all shadow-sm active:scale-95"
                   >
                     <ShieldCheck className="w-4 h-4 text-amber-400" />
                     <span>لوحة الإدارة</span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-stone-800 text-amber-300 font-mono">
                       {user?.role}
                     </span>
+                    {newOrdersUnviewedCount > 0 && (
+                      <span className="absolute -top-1.5 -right-1.5 px-1.5 py-0.5 bg-red-600 text-white text-[10px] font-black rounded-full border-2 border-white animate-bounce">
+                        {newOrdersUnviewedCount}
+                      </span>
+                    )}
                   </button>
                 )}
                 <button
@@ -149,6 +174,21 @@ export function Header({ onOpenLogin, onOpenDashboard, onOpenTracker, onOpenDeli
 
           {/* Mobile Right Controls */}
           <div className="flex items-center gap-2 md:hidden">
+            {onOpenNotifications && (
+              <button
+                onClick={onOpenNotifications}
+                className="relative p-2.5 rounded-xl bg-stone-100 text-stone-700 border border-stone-200"
+                title="الإشعارات"
+              >
+                <Bell className="w-4 h-4 text-stone-700" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 flex items-center justify-center min-w-4 h-4 px-1 text-[10px] font-bold text-white bg-red-600 rounded-full animate-pulse">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+            )}
+
             <button
               onClick={onOpenTracker}
               className="p-2.5 rounded-xl bg-stone-100 text-stone-700 border border-stone-200"

@@ -77,3 +77,27 @@ export async function createCategory(req: Request, res: Response) {
   }
 }
 
+export async function deleteCategory(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const deleted = dbStore.deleteCategory(id);
+    if (!deleted) {
+      return res.status(404).json({
+        success: false,
+        error: 'التصنيف المطلوب غير موجود',
+      });
+    }
+    return res.json({
+      success: true,
+      message: 'تم حذف التصنيف بنجاح',
+    });
+  } catch (error) {
+    console.error('deleteCategory error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'فشل في حذف التصنيف',
+    });
+  }
+}
+
+

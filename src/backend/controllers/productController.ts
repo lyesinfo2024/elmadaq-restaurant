@@ -128,3 +128,27 @@ export async function createProduct(req: Request, res: Response) {
   }
 }
 
+export async function deleteProduct(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const deleted = dbStore.deleteProduct(id);
+    if (!deleted) {
+      return res.status(404).json({
+        success: false,
+        error: 'الوجبة المطلوبة غير موجودة',
+      });
+    }
+    return res.json({
+      success: true,
+      message: 'تم حذف الوجبة بنجاح',
+    });
+  } catch (error) {
+    console.error('deleteProduct error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'فشل في حذف الوجبة',
+    });
+  }
+}
+
+

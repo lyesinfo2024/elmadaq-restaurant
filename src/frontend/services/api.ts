@@ -108,6 +108,20 @@ export const api = {
     return json.data;
   },
 
+  async deleteCategory(id: string, token: string): Promise<boolean> {
+    const res = await fetch(`${BASE_URL}/categories/${id}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const json: ApiResponse<null> = await res.json();
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || 'فشل في حذف التصنيف');
+    }
+    return true;
+  },
+
   // Products
   async getProducts(params?: {
     categoryId?: string;
@@ -167,6 +181,41 @@ export const api = {
       throw new Error(json.error || 'فشل في إضافة الوجبة');
     }
     return json.data;
+  },
+
+  async deleteProduct(id: string, token: string): Promise<boolean> {
+    const res = await fetch(`${BASE_URL}/products/${id}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const json: ApiResponse<null> = await res.json();
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || 'فشل في حذف الوجبة');
+    }
+    return true;
+  },
+
+  // Upload Product Image (من الجهاز)
+  async uploadProductImage(file: File, token: string): Promise<string> {
+    const formData = new FormData();
+    formData.append('image', file);
+
+    const res = await fetch(`${BASE_URL}/upload/product-image`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    const json = await res.json();
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || 'فشل في رفع صورة الوجبة من الجهاز');
+    }
+
+    return json.imageUrl;
   },
 
   // Orders (Customer Endpoints)

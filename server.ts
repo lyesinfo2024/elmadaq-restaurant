@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import apiRouter from './src/backend/routes/index.ts';
@@ -39,6 +40,13 @@ async function startServer() {
   app.use(['/data', '/backups', '/.backup'], (_req, res) => {
     res.status(403).json({ success: false, error: 'Access forbidden' });
   });
+
+  // Serve uploaded assets securely
+  const uploadsDir = path.resolve(process.cwd(), 'uploads');
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true, mode: 0o755 });
+  }
+  app.use('/uploads', express.static(uploadsDir));
 
   // Mount API endpoints
   app.use('/api', apiRouter);

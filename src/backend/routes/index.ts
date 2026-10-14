@@ -8,6 +8,7 @@ import orderRoutes from './orderRoutes.ts';
 import adminOrderRoutes from './adminOrderRoutes.ts';
 import deliveryStaffRoutes from './deliveryStaffRoutes.ts';
 import deliveryPortalRoutes from './deliveryPortalRoutes.ts';
+import uploadRoutes from './uploadRoutes.ts';
 
 const apiRouter = Router();
 
@@ -20,6 +21,7 @@ apiRouter.use('/admin/orders', adminOrderRoutes);
 apiRouter.use('/admin/delivery-staff', deliveryStaffRoutes);
 apiRouter.use('/delivery', deliveryPortalRoutes);
 apiRouter.use('/auth', authRoutes);
+apiRouter.use('/upload', uploadRoutes);
 
 // Health check endpoint
 apiRouter.get('/health', (_req, res) => {
