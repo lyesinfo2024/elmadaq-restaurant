@@ -21,7 +21,9 @@ import {
   History,
   Wallet,
   Info,
+  KeyRound,
 } from 'lucide-react';
+import { ChangePasswordModal } from './ChangePasswordModal.tsx';
 
 interface DeliveryDashboardProps {
   onClose: () => void;
@@ -51,6 +53,9 @@ export function DeliveryDashboard({ onClose }: DeliveryDashboardProps) {
 
   // Success message toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Password Modal State
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -150,6 +155,17 @@ export function DeliveryDashboard({ onClose }: DeliveryDashboardProps) {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Change Password */}
+            <button
+              onClick={() => setIsPasswordModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-stone-850 hover:bg-stone-750 text-stone-200 border border-stone-700/60 text-xs font-bold transition-colors cursor-pointer"
+              title="تغيير كلمة المرور"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">تغيير كلمة المرور</span>
+              <span className="sm:hidden">كلمة المرور</span>
+            </button>
+
             {/* Refresh */}
             <button
               onClick={() => {
@@ -757,6 +773,14 @@ export function DeliveryDashboard({ onClose }: DeliveryDashboardProps) {
           </div>
         </div>
       )}
+
+      {/* Change Password Modal */}
+      <ChangePasswordModal
+        isOpen={isPasswordModalOpen}
+        onClose={() => setIsPasswordModalOpen(false)}
+        userRole="DELIVERY"
+        userName={user?.name}
+      />
     </div>
   );
 }

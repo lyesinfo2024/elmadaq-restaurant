@@ -2,18 +2,18 @@ import type { Restaurant, Category, Product, DeliveryZone, Role } from '../types
 
 export const INITIAL_RESTAURANT: Restaurant = {
   id: 'rest-dz-001',
-  name: 'مطعم ومشاوي البهجة العاصمي',
-  slug: 'elbahdja-alger',
-  description: 'نقدم لكم أشهى المشاوي على الفحم، والشاورما الجزائرية الأصيلة بخبز الصاج، والطاكوس العاصمي والبرغر الطازج، وبيتزا الفرن التقليدي مع خدمة التوصيل السريع والدفع عند الاستلام.',
+  name: 'مطعم المذاق',
+  slug: 'elmadaq-dz',
+  description: 'نقدم لكم أشهى الوجبات والمأكولات الطازجة مع خدمة التوصيل السريع والدفع عند الاستلام.',
   logoUrl: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=240&h=240&q=80',
   coverImageUrl: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1600&q=80',
   phone: '0550 12 34 56',
   email: 'contact@elbahdja.dz',
   
   // العنوان الجزائري
-  wilaya: 'الجزائر العاصمة (16)',
-  commune: 'سيدي امحمد',
-  address: '14 شارع ديدوش مراد، قرب ساحة أول ماي، سيدي امحمد، الجزائر العاصمة',
+  wilaya: 'إليزي (33)',
+  commune: 'إليزي',
+  address: 'حي المستقبل، إليزي',
   
   currency: 'دج',
   currencyCode: 'DZD',
@@ -21,9 +21,9 @@ export const INITIAL_RESTAURANT: Restaurant = {
   openingHours: 'يومياً من 11:30 صباحاً إلى 23:30 ليلاً بتوقيت الجزائر',
   timezone: 'Africa/Algiers',
   
-  defaultDeliveryFee: 300, // 300 دج
-  minOrderAmount: 800,     // 800 دج
-  defaultCourierFeePerOrder: 100, // 100 دج أجرة التوصيل الافتراضية لكل طلب للمندوب
+  defaultDeliveryFee: 100, // 100 دج
+  minOrderAmount: 200,     // 200 دج
+  defaultCourierFeePerOrder: 100, // 100 دج
   
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
@@ -74,18 +74,8 @@ export const INITIAL_USERS_RAW = [
     role: 'ADMIN' as Role,
     isActive: true,
   },
-  {
-    id: 'usr-mgr-dz-01',
-    restaurantId: 'rest-dz-001',
-    name: 'ياسمين بلقاسم',
-    email: 'manager@elbahdja.dz',
-    username: 'manager',
-    passwordPlain: 'Manager@123456',
-    phone: '0661234567',
-    role: 'MANAGER' as Role,
-    isActive: true,
-  },
 ];
 
 export const INITIAL_DELIVERY_PEOPLE: any[] = [];
+
 

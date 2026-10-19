@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="100%" height="100%" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFBEB" />
+      <stop offset="100%" stop-color="#F5E6CA" />
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F59E0B" />
+      <stop offset="100%" stop-color="#D97706" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#78350F" flood-opacity="0.12" />
+    </filter>
+  </defs>
+
+  <!-- Background with warm food gradient -->
+  <rect width="400" height="300" fill="url(#bgGrad)" />
+
+  <!-- Subtle background pattern rings -->
+  <circle cx="200" cy="135" r="110" fill="none" stroke="#FDE68A" stroke-width="1.5" stroke-dasharray="4 6" opacity="0.6" />
+  <circle cx="200" cy="135" r="85" fill="#FEF3C7" opacity="0.5" />
+
+  <!-- Steam lines -->
+  <path d="M185 80 Q180 65 188 52" fill="none" stroke="#D97706" stroke-width="2.5" stroke-linecap="round" opacity="0.6" />
+  <path d="M200 75 Q205 60 198 48" fill="none" stroke="#D97706" stroke-width="2.5" stroke-linecap="round" opacity="0.7" />
+  <path d="M215 80 Q220 65 212 52" fill="none" stroke="#D97706" stroke-width="2.5" stroke-linecap="round" opacity="0.6" />
+
+  <!-- Central Serving Cloche / Plate -->
+  <g filter="url(#shadow)">
+    <!-- Plate base -->
+    <ellipse cx="200" cy="175" rx="72" ry="14" fill="#E2D1B8" />
+    <ellipse cx="200" cy="173" rx="68" ry="12" fill="#FFFFFF" />
+    <ellipse cx="200" cy="173" rx="55" ry="8" fill="#F8FAFC" />
+
+    <!-- Cloche cover / Dome -->
+    <path d="M142 165 C142 110, 258 110, 258 165 Z" fill="url(#goldGrad)" />
+    <!-- Cloche handle top -->
+    <ellipse cx="200" cy="108" rx="8" ry="6" fill="#B45309" />
+    <circle cx="200" cy="103" r="5" fill="#D97706" />
+
+    <!-- Cloche highlight -->
+    <path d="M152 160 C156 125, 190 118, 196 118" fill="none" stroke="#FEF3C7" stroke-width="3" stroke-linecap="round" opacity="0.6" />
+
+    <!-- Cloche bottom rim -->
+    <rect x="138" y="163" width="124" height="6" rx="3" fill="#B45309" />
+  </g>
+
+  <!-- Elegant Restaurant Tag -->
+  <g transform="translate(200, 225)" text-anchor="middle">
+    <!-- Brand badge -->
+    <rect x="-65" y="-5" width="130" height="26" rx="13" fill="#78350F" opacity="0.08" />
+    <text x="0" y="13" font-family="system-ui, -apple-system, sans-serif" font-weight="800" font-size="13" fill="#78350F" letter-spacing="0.5">مطعم المذاق</text>
+  </g>
+
+  <g transform="translate(200, 258)" text-anchor="middle">
+    <text x="0" y="12" font-family="system-ui, -apple-system, sans-serif" font-weight="600" font-size="11" fill="#92400E" opacity="0.8">وجبة طازجة وشهية</text>
+  </g>
+</svg>

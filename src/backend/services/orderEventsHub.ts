@@ -1,14 +1,12 @@
 import { EventEmitter } from 'events';
 import { Order } from '../types/index.ts';
 
-export type OrderEventType = 'order:created' | 'order:status_updated' | 'order:assigned';
+export type OrderEventType = 'order:created';
 
 export interface OrderRealtimeEvent {
   type: OrderEventType;
   timestamp: string;
   order: Order;
-  previousStatus?: string;
-  updatedByRole?: string;
 }
 
 class OrderEventsHub extends EventEmitter {
@@ -21,26 +19,6 @@ class OrderEventsHub extends EventEmitter {
   notifyOrderCreated(order: Order) {
     const payload: OrderRealtimeEvent = {
       type: 'order:created',
-      timestamp: new Date().toISOString(),
-      order,
-    };
-    this.emit('order_event', payload);
-  }
-
-  notifyOrderStatusUpdated(order: Order, previousStatus?: string, updatedByRole?: string) {
-    const payload: OrderRealtimeEvent = {
-      type: 'order:status_updated',
-      timestamp: new Date().toISOString(),
-      order,
-      previousStatus,
-      updatedByRole,
-    };
-    this.emit('order_event', payload);
-  }
-
-  notifyOrderAssigned(order: Order) {
-    const payload: OrderRealtimeEvent = {
-      type: 'order:assigned',
       timestamp: new Date().toISOString(),
       order,
     };

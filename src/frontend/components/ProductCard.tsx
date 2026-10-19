@@ -32,10 +32,16 @@ export function ProductCard({ product, onOpenDetails }: ProductCardProps) {
       {/* Product Image Container */}
       <div className="relative aspect-4/3 w-full bg-stone-100 overflow-hidden">
         <img
-          src={product.imageUrl}
+          src={product.imageUrl || '/meal-placeholder.svg'}
           alt={product.name}
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
           loading="lazy"
+          onError={(e) => {
+            const target = e.currentTarget;
+            if (!target.src.endsWith('/meal-placeholder.svg')) {
+              target.src = '/meal-placeholder.svg';
+            }
+          }}
         />
 
         {/* Gradient backdrop */}

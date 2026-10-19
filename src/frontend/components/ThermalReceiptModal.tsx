@@ -139,7 +139,13 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
       setPrintError(null);
       setPrintSuccess(null);
 
+      // تشغيل نافذة الطباعة تلقائياً بعد استقرار عناصر الفاتورة في الواجهة
+      const timer = setTimeout(() => {
+        handleDirectPrint();
+      }, 200);
+
       return () => {
+        clearTimeout(timer);
         document.body.classList.remove('is-printing-receipt');
       };
     }

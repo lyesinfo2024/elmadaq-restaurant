@@ -197,13 +197,7 @@ export async function updateOrderStatus(req: Request, res: Response) {
       });
     }
 
-    const previousOrder = dbStore.getOrderById(id);
-    const previousStatus = previousOrder?.status;
-
     const updated = dbStore.updateOrderStatus(id, status as OrderStatus);
-
-    // Realtime notification for Admin, Delivery driver, and Customer tracker
-    orderEventsHub.notifyOrderStatusUpdated(updated, previousStatus, 'ADMIN');
 
     return res.json({
       success: true,
@@ -229,13 +223,27 @@ export async function streamOrderEvents(req: Request, res: Response) {
     'X-Accel-Buffering': 'no',
     'Access-Control-Allow-Origin': '*',
   });
+  if (typeof (res as any).flushHeaders === 'function') {
+    (res as any).flushHeaders();
+  }
 
   // Send initial handshake / keepalive
   res.write(`event: connected\ndata: ${JSON.stringify({ message: 'connected to orders stream', time: new Date().toISOString() })}\n\n`);
+  if (typeof (res as any).flush === 'function') {
+    (res as any).flush();
+  }
 
-  const onEvent = (eventData: unknown) => {
+  const onEvent = (eventData: any) => {
     try {
-      res.write(`data: ${JSON.stringify(eventData)}\n\n`);
+      const json = JSON.stringify(eventData);
+      const eventName = eventData?.type || 'order:created';
+      // 1. Send with explicit event name (e.g. event: order:created)
+      res.write(`event: ${eventName}\ndata: ${json}\n\n`);
+      // 2. Send standard message for onmessage listeners
+      res.write(`data: ${json}\n\n`);
+      if (typeof (res as any).flush === 'function') {
+        (res as any).flush();
+      }
     } catch {
       // Stream closed or error
     }
@@ -247,6 +255,9 @@ export async function streamOrderEvents(req: Request, res: Response) {
   const heartbeatTimer = setInterval(() => {
     try {
       res.write(`: heartbeat\n\n`);
+      if (typeof (res as any).flush === 'function') {
+        (res as any).flush();
+      }
     } catch {
       clearInterval(heartbeatTimer);
     }

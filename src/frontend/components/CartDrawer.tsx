@@ -112,9 +112,15 @@ export function CartDrawer({ onOpenCheckout }: CartDrawerProps) {
               items.map(({ product, quantity, notes }) => (
                 <div key={product.id} className="py-4 flex gap-3.5 items-center">
                   <img
-                    src={product.imageUrl}
+                    src={product.imageUrl || '/meal-placeholder.svg'}
                     alt={product.name}
                     className="w-16 h-16 rounded-2xl object-cover shrink-0 border border-stone-200"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      if (!target.src.endsWith('/meal-placeholder.svg')) {
+                        target.src = '/meal-placeholder.svg';
+                      }
+                    }}
                   />
 
                   <div className="flex-1 min-w-0">

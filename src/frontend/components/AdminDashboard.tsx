@@ -56,13 +56,11 @@ import {
   Info,
   Upload,
   Printer,
-  Bell,
-  Volume2,
-  VolumeX,
+  KeyRound,
 } from 'lucide-react';
 import { ThermalReceiptModal } from './ThermalReceiptModal.tsx';
-import { useNotification } from '../context/NotificationContext.tsx';
-import { NotificationCenterModal } from './NotificationCenterModal.tsx';
+import { ChangePasswordModal } from './ChangePasswordModal.tsx';
+import { soundPlayer } from '../utils/soundEffects.ts';
 
 interface AdminDashboardProps {
   categories: Category[];
@@ -84,18 +82,12 @@ const STATUS_LABELS: Record<OrderStatus, { label: string; color: string; badge: 
 export function AdminDashboard({ categories: initialCategories, products: initialProducts, onClose, onMenuUpdated }: AdminDashboardProps) {
   const { user, token, logout, isAdmin, isManager } = useAuth();
   const { restaurant, updateSettings } = useRestaurant();
-  const {
-    unreadCount,
-    newOrdersUnviewedCount,
-    isMuted,
-    toggleMute,
-    resetNewOrdersBadge,
-    setNavigateHandler,
-  } = useNotification();
+  // Set of seen order IDs to avoid duplicate alerts across refreshes / reconnects
+  const seenOrderIdsRef = useRef<Set<string>>(new Set());
+  const isInitialLoadRef = useRef<boolean>(true);
 
   const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'dues' | 'revenues' | 'drivers' | 'settings' | 'menu' | 'delivery' | 'roles'>('orders');
   const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>([]);
-  const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
 
   // Local categories and products state (with immediate refresh support)
   const [categoriesList, setCategoriesList] = useState<Category[]>(initialCategories);
@@ -230,6 +222,9 @@ export function AdminDashboard({ categories: initialCategories, products: initia
   const [orderToPrint, setOrderToPrint] = useState<Order | null>(null);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
+  // Password Change Modal State
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+
   const handlePrintOrder = (order: Order) => {
     setOrderToPrint(order);
     setIsPrintModalOpen(true);
@@ -299,6 +294,27 @@ export function AdminDashboard({ categories: initialCategories, products: initia
     try {
       const data = await api.getAdminOrders(token);
       setOrders(data);
+
+      if (isInitialLoadRef.current) {
+        // Mark all existing orders as seen on initial mount so they never trigger an alert
+        data.forEach((o) => seenOrderIdsRef.current.add(o.id));
+        isInitialLoadRef.current = false;
+      } else {
+        // On subsequent polls/refreshes, check for genuine unseen NEW orders
+        let hasNewOrder = false;
+        for (const o of data) {
+          if (o.status === 'NEW' && !seenOrderIdsRef.current.has(o.id)) {
+            seenOrderIdsRef.current.add(o.id);
+            hasNewOrder = true;
+          } else {
+            seenOrderIdsRef.current.add(o.id);
+          }
+        }
+        if (hasNewOrder) {
+          soundPlayer.playNewOrderAlert();
+        }
+      }
+
       if (selectedOrder) {
         const refreshed = data.find((o) => o.id === selectedOrder.id);
         if (refreshed) setSelectedOrder(refreshed);
@@ -452,24 +468,97 @@ export function AdminDashboard({ categories: initialCategories, products: initia
     loadStaff();
     loadDuesSummary();
     api.getDeliveryZones(false).then(setDeliveryZones).catch(console.error);
+  }, [token]);
 
-    // Register notification navigation handler to open orders tab and view details
-    setNavigateHandler((orderId: string, orderNumber: string) => {
-      setActiveTab('orders');
-      if (orderId) {
-        // Find in existing orders or reload
-        const found = orders.find((o) => o.id === orderId || o.orderNumber === orderNumber);
-        if (found) {
-          setSelectedOrder(found);
-        } else {
-          api.getAdminOrders(token || '').then((allOrders) => {
-            setOrders(allOrders);
-            const ref = allOrders.find((o) => o.id === orderId || o.orderNumber === orderNumber);
-            if (ref) setSelectedOrder(ref);
-          }).catch(() => {});
+  // Real-time listener: Single alert sound when a NEW order arrives and is saved
+  useEffect(() => {
+    // Unlock AudioContext on mount and continuously on any user interaction
+    soundPlayer.unlockAudio();
+    const handleGesture = () => {
+      soundPlayer.unlockAudio();
+    };
+    window.addEventListener('click', handleGesture, { passive: true });
+    window.addEventListener('keydown', handleGesture, { passive: true });
+    window.addEventListener('touchstart', handleGesture, { passive: true });
+    window.addEventListener('mousedown', handleGesture, { passive: true });
+
+    let eventSource: EventSource | null = null;
+    let retryTimeout: NodeJS.Timeout | null = null;
+    let pollInterval: NodeJS.Timeout | null = null;
+    let isDisposed = false;
+
+    const processOrderEvent = (event: MessageEvent) => {
+      if (!event.data) return;
+      try {
+        const payload = JSON.parse(event.data);
+        const order = payload.order || payload;
+        const newOrderId = order?.id;
+        // ONLY trigger sound when a NEW order is created and saved
+        if (newOrderId && (payload.type === 'order:created' || order.status === 'NEW')) {
+          // Ensure no duplicate sounds for same order, and no sounds if already seen
+          if (!seenOrderIdsRef.current.has(newOrderId)) {
+            seenOrderIdsRef.current.add(newOrderId);
+            // Play single alert sound in restaurant admin dashboard
+            soundPlayer.playNewOrderAlert();
+            // Refresh orders in table
+            loadOrders();
+          }
+        }
+      } catch {
+        // Heartbeat or keepalive
+      }
+    };
+
+    const connectSSE = () => {
+      if (isDisposed) return;
+      try {
+        eventSource = new EventSource('/api/orders/events/stream');
+
+        // Listen for named event 'order:created'
+        eventSource.addEventListener('order:created', processOrderEvent);
+        // Also listen for default onmessage
+        eventSource.onmessage = processOrderEvent;
+
+        eventSource.onerror = () => {
+          if (eventSource) {
+            eventSource.removeEventListener('order:created', processOrderEvent);
+            eventSource.close();
+            eventSource = null;
+          }
+          if (!isDisposed) {
+            retryTimeout = setTimeout(connectSSE, 3000);
+          }
+        };
+      } catch (err) {
+        console.warn('[AdminDashboard] SSE connection error:', err);
+        if (!isDisposed) {
+          retryTimeout = setTimeout(connectSSE, 4000);
         }
       }
-    });
+    };
+
+    connectSSE();
+
+    // Background sync every 3 seconds to guarantee automatic detection if SSE stream is buffered or interrupted
+    pollInterval = setInterval(() => {
+      if (!isDisposed && token) {
+        loadOrders();
+      }
+    }, 3000);
+
+    return () => {
+      isDisposed = true;
+      if (retryTimeout) clearTimeout(retryTimeout);
+      if (pollInterval) clearInterval(pollInterval);
+      if (eventSource) {
+        eventSource.removeEventListener('order:created', processOrderEvent);
+        eventSource.close();
+      }
+      window.removeEventListener('click', handleGesture);
+      window.removeEventListener('keydown', handleGesture);
+      window.removeEventListener('touchstart', handleGesture);
+      window.removeEventListener('mousedown', handleGesture);
+    };
   }, [token]);
 
   // Handle status update
@@ -708,8 +797,6 @@ export function AdminDashboard({ categories: initialCategories, products: initia
     return matchesStatus && matchesDriver;
   });
 
-  const newOrdersCount = orders.filter((o) => o.status === 'NEW').length;
-
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-stone-100 text-stone-900 animate-in fade-in">
       {/* Top Navbar */}
@@ -736,39 +823,15 @@ export function AdminDashboard({ categories: initialCategories, products: initia
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            {/* Sound Toggle Button */}
+          <div className="flex items-center gap-2 sm:gap-3">
             <button
-              onClick={toggleMute}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-colors ${
-                isMuted
-                  ? 'bg-red-950/60 text-red-300 border-red-800 hover:bg-red-900'
-                  : 'bg-stone-800 text-amber-400 border-stone-700 hover:bg-stone-750'
-              }`}
-              title={isMuted ? 'الصوت معطل (اضغط لتفعيله)' : 'الصوت مفعل (اضغط لكتمه)'}
+              onClick={() => setIsPasswordModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700/70 text-xs font-semibold transition-colors cursor-pointer"
+              title="تغيير كلمة المرور"
             >
-              {isMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4" />}
-              <span className="hidden md:inline">{isMuted ? 'صوت معطل' : 'صوت مفعل'}</span>
+              <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+              <span>تغيير كلمة المرور</span>
             </button>
-
-            {/* Notifications Center Button */}
-            <button
-              onClick={() => {
-                setIsNotificationModalOpen(true);
-                resetNewOrdersBadge();
-              }}
-              className="relative flex items-center gap-1.5 px-3 py-2 rounded-xl bg-stone-800 hover:bg-stone-750 text-stone-200 border border-stone-700 text-xs font-bold transition-colors"
-              title="مركز الإشعارات والتنبيهات"
-            >
-              <Bell className="w-4 h-4 text-amber-400" />
-              <span className="hidden sm:inline">التنبيهات</span>
-              {unreadCount > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-red-600 text-white animate-pulse">
-                  {unreadCount}
-                </span>
-              )}
-            </button>
-
             <button
               onClick={onClose}
               className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-semibold"
@@ -793,7 +856,7 @@ export function AdminDashboard({ categories: initialCategories, products: initia
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center gap-2 overflow-x-auto scrollbar-none py-2 border-t border-stone-800/80">
           <button
             onClick={() => setActiveTab('orders')}
-            className={`relative flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
               activeTab === 'orders'
                 ? 'bg-amber-500 text-stone-950 shadow-sm'
                 : 'text-stone-400 hover:text-white hover:bg-stone-800'
@@ -801,11 +864,6 @@ export function AdminDashboard({ categories: initialCategories, products: initia
           >
             <ClipboardList className="w-4 h-4" />
             <span>إدارة الطلبات</span>
-            {newOrdersCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-red-600 text-white animate-pulse">
-                {newOrdersCount} جديد
-              </span>
-            )}
           </button>
 
           <button
@@ -984,7 +1042,9 @@ export function AdminDashboard({ categories: initialCategories, products: initia
               {filteredOrders.length === 0 ? (
                 <div className="p-12 text-center text-stone-400 space-y-2">
                   <ClipboardList className="w-10 h-10 mx-auto opacity-40" />
-                  <p className="font-bold text-sm">لا توجد طلبات تطابق هذا التصنيف</p>
+                  <p className="font-bold text-sm">
+                    {orders.length === 0 ? 'لا توجد طلبات حاليًا' : 'لا توجد طلبات تطابق هذا التصنيف'}
+                  </p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -1888,7 +1948,9 @@ export function AdminDashboard({ categories: initialCategories, products: initia
                     <Clock className="w-5 h-5" />
                   </div>
                 </div>
-                <div className="text-3xl font-black text-red-600">{newOrdersCount}</div>
+                <div className="text-3xl font-black text-red-600">
+                  {orders.filter((o) => o.status === 'NEW').length}
+                </div>
                 <p className="text-xs text-stone-400 mt-1">بحاجة لمعالجة المطبخ</p>
               </div>
 
@@ -2124,6 +2186,29 @@ export function AdminDashboard({ categories: initialCategories, products: initia
                 </div>
               )}
             </form>
+
+            {/* Security & Password Card */}
+            <div className="mt-6 pt-6 border-t border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-stone-50 p-4 rounded-2xl border border-stone-200/80">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-stone-900 text-amber-400">
+                  <KeyRound className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-stone-900">أمان الحساب وكلمة المرور</h4>
+                  <p className="text-xs text-stone-500">
+                    تغيير كلمة المرور الخاصة بحساب مسير المطعم ({user?.email})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPasswordModalOpen(true)}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-white font-bold text-xs shadow-xs transition-all active:scale-95 cursor-pointer"
+              >
+                <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                <span>تغيير كلمة المرور</span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -2267,9 +2352,15 @@ export function AdminDashboard({ categories: initialCategories, products: initia
                             <td className="p-4">
                               <div className="flex items-center gap-3">
                                 <img
-                                  src={prod.imageUrl}
+                                  src={prod.imageUrl || '/meal-placeholder.svg'}
                                   alt={prod.name}
                                   className="w-12 h-12 rounded-xl object-cover shrink-0 border border-stone-200"
+                                  onError={(e) => {
+                                    const target = e.currentTarget;
+                                    if (!target.src.endsWith('/meal-placeholder.svg')) {
+                                      target.src = '/meal-placeholder.svg';
+                                    }
+                                  }}
                                 />
                                 <div>
                                   <div className="font-bold text-stone-900 text-sm">{prod.name}</div>
@@ -3555,23 +3646,23 @@ export function AdminDashboard({ categories: initialCategories, products: initia
         </div>
       )}
 
-      {/* NOTIFICATION CENTER MODAL */}
-      <NotificationCenterModal
-        isOpen={isNotificationModalOpen}
-        onClose={() => setIsNotificationModalOpen(false)}
-        onSelectOrder={(orderId, orderNumber) => {
-          setActiveTab('orders');
-          const found = orders.find((o) => o.id === orderId || o.orderNumber === orderNumber);
-          if (found) {
-            setSelectedOrder(found);
-          } else {
-            api.getAdminOrders(token || '').then((allOrders) => {
-              setOrders(allOrders);
-              const ref = allOrders.find((o) => o.id === orderId || o.orderNumber === orderNumber);
-              if (ref) setSelectedOrder(ref);
-            }).catch(() => {});
-          }
+      {/* Thermal Receipt Printing Modal (Xprinter 80mm & 58mm) */}
+      <ThermalReceiptModal
+        isOpen={isPrintModalOpen}
+        order={orderToPrint}
+        onClose={() => {
+          setIsPrintModalOpen(false);
+          setOrderToPrint(null);
         }}
+        restaurantName={restaurant?.name}
+      />
+
+      {/* Change Password Modal */}
+      <ChangePasswordModal
+        isOpen={isPasswordModalOpen}
+        onClose={() => setIsPasswordModalOpen(false)}
+        userRole={user?.role}
+        userName={user?.name}
       />
     </div>
   );

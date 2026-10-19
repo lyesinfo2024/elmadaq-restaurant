@@ -14,8 +14,8 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  // Dev server must run on 3000 behind Nginx (port 8080)
-  const PORT = process.env.APP_PORT ? parseInt(process.env.APP_PORT, 10) : 3000;
+  // Dev server must run on 3000 behind Nginx
+  const PORT = Number(process.env.APP_PORT) || 3000;
   const isProduction = process.env.NODE_ENV === 'production';
 
   // Parse JSON bodies
@@ -46,7 +46,28 @@ async function startServer() {
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true, mode: 0o755 });
   }
+  const productsUploadDir = path.join(uploadsDir, 'products');
+  if (!fs.existsSync(productsUploadDir)) {
+    fs.mkdirSync(productsUploadDir, { recursive: true, mode: 0o755 });
+  }
   app.use('/uploads', express.static(uploadsDir));
+
+  // Serve public static assets (e.g. meal-placeholder.svg)
+  const publicDir = path.resolve(process.cwd(), 'public');
+  if (fs.existsSync(publicDir)) {
+    app.use(express.static(publicDir));
+  }
+
+  // Fallback for missing uploaded images: Return placeholder SVG instead of falling through to Vite SPA index.html
+  const fallbackPlaceholder = path.resolve(publicDir, 'meal-placeholder.svg');
+  app.use('/uploads', (_req, res) => {
+    if (fs.existsSync(fallbackPlaceholder)) {
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      return res.sendFile(fallbackPlaceholder);
+    }
+    return res.status(404).send('Image not found');
+  });
 
   // Mount API endpoints
   app.use('/api', apiRouter);

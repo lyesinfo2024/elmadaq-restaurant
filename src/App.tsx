@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo } from 'react';
 import { RestaurantProvider, useRestaurant } from './frontend/context/RestaurantContext.tsx';
 import { CartProvider } from './frontend/context/CartContext.tsx';
 import { AuthProvider, useAuth } from './frontend/context/AuthContext.tsx';
-import { NotificationProvider, useNotification } from './frontend/context/NotificationContext.tsx';
 import { Category, Product, Order } from './frontend/types/index.ts';
 import { api } from './frontend/services/api.ts';
 import { Header } from './frontend/components/Header.tsx';
@@ -18,9 +17,8 @@ import { OrderTrackerModal } from './frontend/components/OrderTrackerModal.tsx';
 import { AdminLoginModal } from './frontend/components/AdminLoginModal.tsx';
 import { AdminDashboard } from './frontend/components/AdminDashboard.tsx';
 import { DeliveryDashboard } from './frontend/components/DeliveryDashboard.tsx';
-import { NotificationToast } from './frontend/components/NotificationToast.tsx';
-import { NotificationCenterModal } from './frontend/components/NotificationCenterModal.tsx';
 import { formatAlgerianPhone } from './frontend/utils/formatters.ts';
+import { soundPlayer } from './frontend/utils/soundEffects.ts';
 import { Utensils, Sparkles, Phone, MapPin, ShieldCheck, Heart, Banknote, Search, Bike } from 'lucide-react';
 
 function RestaurantApp() {
@@ -47,28 +45,6 @@ function RestaurantApp() {
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
   const [isSuccessOpen, setIsSuccessOpen] = useState(false);
   const [isTrackerOpen, setIsTrackerOpen] = useState(false);
-  const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
-
-  const { setNavigateHandler } = useNotification();
-
-  useEffect(() => {
-    // When an order notification is clicked, route to the tracker or admin dashboard
-    setNavigateHandler((orderId: string, orderNumber: string) => {
-      if (isAuthenticated && !isDelivery) {
-        setIsDashboardOpen(true);
-      } else {
-        // Open tracker modal for customers or delivery staff
-        if (orderNumber) {
-          api.trackOrder(orderNumber).then((ord) => {
-            setCreatedOrder(ord);
-            setIsTrackerOpen(true);
-          }).catch(() => {
-            setIsTrackerOpen(true);
-          });
-        }
-      }
-    });
-  }, [isAuthenticated, isDelivery, setNavigateHandler]);
 
   // Fetch categories and products from REST API
   const loadMenuData = async () => {
@@ -153,10 +129,13 @@ function RestaurantApp() {
       {/* Header */}
       <Header
         onOpenLogin={() => setIsLoginModalOpen(true)}
-        onOpenDashboard={() => (isDelivery ? setIsDeliveryDashboardOpen(true) : setIsDashboardOpen(true))}
+        onOpenDashboard={() => {
+          soundPlayer.unlockAudio();
+          if (isDelivery) setIsDeliveryDashboardOpen(true);
+          else setIsDashboardOpen(true);
+        }}
         onOpenTracker={() => setIsTrackerOpen(true)}
         onOpenDelivery={() => setIsDeliveryDashboardOpen(true)}
-        onOpenNotifications={() => setIsNotificationCenterOpen(true)}
       />
 
       {/* Hero Section */}
@@ -240,19 +219,36 @@ function RestaurantApp() {
                 <div className="w-14 h-14 rounded-full bg-stone-100 text-stone-400 flex items-center justify-center mx-auto mb-3">
                   <Utensils className="w-7 h-7" />
                 </div>
-                <h3 className="text-base font-bold text-stone-800 mb-1">لا توجد وجبات تطابق بحثك</h3>
-                <p className="text-xs text-stone-500 mb-4">
-                  جرب البحث بكلمات أخرى أو اختر تصنيفاً آخر من القائمة أعلاه.
-                </p>
-                <button
-                  onClick={() => {
-                    setSelectedCategoryId(null);
-                    setSearchQuery('');
-                  }}
-                  className="px-4 py-2 bg-stone-900 text-white rounded-xl text-xs font-bold hover:bg-stone-800"
-                >
-                  إعادة ضبط الفلاتر
-                </button>
+                {products.length === 0 ? (
+                  <>
+                    <h3 className="text-base font-bold text-stone-800 mb-1">لا توجد وجبات في القائمة حالياً</h3>
+                    <p className="text-xs text-stone-500 mb-4">
+                      يمكن لمسير المطعم إضافة الوجبات والتصنيفات من خلال لوحة الإدارة.
+                    </p>
+                    <button
+                      onClick={() => (isAuthenticated ? setIsDashboardOpen(true) : setIsLoginModalOpen(true))}
+                      className="px-4 py-2 bg-stone-900 text-white rounded-xl text-xs font-bold hover:bg-stone-800"
+                    >
+                      {isAuthenticated ? 'فتح لوحة الإدارة' : 'تسجيل الدخول للوحة الإدارة'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <h3 className="text-base font-bold text-stone-800 mb-1">لا توجد وجبات تطابق بحثك</h3>
+                    <p className="text-xs text-stone-500 mb-4">
+                      جرب البحث بكلمات أخرى أو اختر تصنيفاً آخر من القائمة أعلاه.
+                    </p>
+                    <button
+                      onClick={() => {
+                        setSelectedCategoryId(null);
+                        setSearchQuery('');
+                      }}
+                      className="px-4 py-2 bg-stone-900 text-white rounded-xl text-xs font-bold hover:bg-stone-800"
+                    >
+                      إعادة ضبط الفلاتر
+                    </button>
+                  </>
+                )}
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -425,40 +421,6 @@ function RestaurantApp() {
       {isDeliveryDashboardOpen && (
         <DeliveryDashboard onClose={() => setIsDeliveryDashboardOpen(false)} />
       )}
-
-      {/* Realtime Notification Toast */}
-      <NotificationToast
-        onSelectOrder={(_orderId, orderNumber) => {
-          if (isAuthenticated && !isDelivery) {
-            setIsDashboardOpen(true);
-          } else if (orderNumber) {
-            api.trackOrder(orderNumber).then((ord) => {
-              setCreatedOrder(ord);
-              setIsTrackerOpen(true);
-            }).catch(() => {
-              setIsTrackerOpen(true);
-            });
-          }
-        }}
-      />
-
-      {/* Notification Center Modal */}
-      <NotificationCenterModal
-        isOpen={isNotificationCenterOpen}
-        onClose={() => setIsNotificationCenterOpen(false)}
-        onSelectOrder={(_orderId, orderNumber) => {
-          if (isAuthenticated && !isDelivery) {
-            setIsDashboardOpen(true);
-          } else if (orderNumber) {
-            api.trackOrder(orderNumber).then((ord) => {
-              setCreatedOrder(ord);
-              setIsTrackerOpen(true);
-            }).catch(() => {
-              setIsTrackerOpen(true);
-            });
-          }
-        }}
-      />
     </div>
   );
 }
@@ -468,9 +430,7 @@ export default function App() {
     <RestaurantProvider>
       <CartProvider>
         <AuthProvider>
-          <NotificationProvider>
-            <RestaurantApp />
-          </NotificationProvider>
+          <RestaurantApp />
         </AuthProvider>
       </CartProvider>
     </RestaurantProvider>

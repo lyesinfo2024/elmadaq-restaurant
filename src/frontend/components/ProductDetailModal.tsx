@@ -54,11 +54,17 @@ export function ProductDetailModal({ product, categories, onClose }: ProductDeta
         </button>
 
         {/* Large Product Image */}
-        <div className="relative h-64 sm:h-80 w-full bg-stone-100">
+        <div className="relative h-64 sm:h-80 w-full bg-stone-100 overflow-hidden">
           <img
-            src={product.imageUrl}
+            src={product.imageUrl || '/meal-placeholder.svg'}
             alt={product.name}
             className="w-full h-full object-cover"
+            onError={(e) => {
+              const target = e.currentTarget;
+              if (!target.src.endsWith('/meal-placeholder.svg')) {
+                target.src = '/meal-placeholder.svg';
+              }
+            }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-stone-900/60 via-transparent to-black/20" />
 

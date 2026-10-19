@@ -14,8 +14,14 @@ router.post(
   '/product-image',
   authenticate,
   requireRole('ADMIN', 'MANAGER'),
-  uploadMiddleware,
-  handleMulterErrors,
+  (req, res, next) => {
+    (uploadMiddleware as any)(req, res, (err: any) => {
+      if (err) {
+        return handleMulterErrors(err, req, res, next);
+      }
+      next();
+    });
+  },
   handleProductImageUpload
 );
 

@@ -325,116 +325,59 @@ export class SQLiteDatabaseStore {
       }
     }
 
-    // 3. Categories
-    const catCount = (this.db.prepare('SELECT COUNT(*) as count FROM categories').get() as any).count;
-    if (catCount === 0 && INITIAL_CATEGORIES.length > 0) {
-      const stmt = this.db.prepare(`
-        INSERT INTO categories (
-          id, restaurant_id, name, description, image_url, icon,
-          display_order, is_active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      for (const c of INITIAL_CATEGORIES) {
-        stmt.run(
-          c.id,
-          c.restaurantId,
-          c.name,
-          c.description || null,
-          c.imageUrl || null,
-          c.icon || null,
-          c.displayOrder,
-          c.isActive ? 1 : 0,
-          c.createdAt,
-          c.updatedAt
-        );
-      }
-    }
+    // 3. Categories: Never auto-seed. Categories are only added by the administrator via the Admin Dashboard.
+    // 4. Products: Never auto-seed. Meals/products are only added by the administrator via the Admin Dashboard.
+    // 5. Delivery Staff: Never auto-seed. Drivers are only registered by the administrator.
 
-    // 4. Products
-    const prodCount = (this.db.prepare('SELECT COUNT(*) as count FROM products').get() as any).count;
-    if (prodCount === 0 && INITIAL_PRODUCTS.length > 0) {
-      const stmt = this.db.prepare(`
-        INSERT INTO products (
-          id, restaurant_id, category_id, name, description, price,
-          image_url, is_available, is_featured, display_order,
-          preparation_time_minutes, calories, tags, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      for (const p of INITIAL_PRODUCTS) {
-        stmt.run(
-          p.id,
-          p.restaurantId,
-          p.categoryId,
-          p.name,
-          p.description,
-          p.price,
-          p.imageUrl,
-          p.isAvailable ? 1 : 0,
-          p.isFeatured ? 1 : 0,
-          p.displayOrder,
-          p.preparationTimeMinutes ?? null,
-          p.calories ?? null,
-          p.tags || null,
-          p.createdAt,
-          p.updatedAt
-        );
-      }
-    }
+    // 6. Administrator Account:
+    // Ensure the official restaurant administrator account exists and is valid with role ADMIN.
+    // Checks by email/username/role to prevent any duplicate insertion, while strictly avoiding
+    // any demo users, demo orders, demo meals, or affecting real drivers and financial records.
+    const existingAdmin = this.db.prepare(`
+      SELECT * FROM users WHERE email = ? OR username = ? OR role = 'ADMIN'
+      LIMIT 1
+    `).get('admin@elbahdja.dz', 'admin') as any;
 
-    // 5. Admin, Manager & Courier Users (ensure all initial users exist)
-    const userStmt = this.db.prepare(`
-      INSERT INTO users (
-        id, restaurant_id, name, email, username, password_hash,
-        phone, role, is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const now = new Date().toISOString();
-    for (const u of INITIAL_USERS_RAW) {
-      const existingUser = this.db.prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1').get(u.email);
-      if (!existingUser) {
-        const passwordHash = await bcrypt.hash(u.passwordPlain, 10);
-        userStmt.run(
-          u.id,
-          u.restaurantId,
-          u.name,
-          u.email,
-          u.username || u.email.split('@')[0],
-          passwordHash,
-          u.phone || null,
-          u.role,
-          u.isActive ? 1 : 0,
-          now,
-          now
-        );
-      }
-    }
+    if (!existingAdmin && INITIAL_USERS_RAW.length > 0) {
+      const u = INITIAL_USERS_RAW[0];
+      const passwordHash = await bcrypt.hash(u.passwordPlain, 10);
+      const now = new Date().toISOString();
+      this.db.prepare(`
+        INSERT INTO users (
+          id, restaurant_id, name, email, username, password_hash,
+          phone, role, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        u.id,
+        u.restaurantId,
+        u.name,
+        u.email,
+        u.username || u.email.split('@')[0],
+        passwordHash,
+        u.phone || null,
+        u.role,
+        u.isActive ? 1 : 0,
+        now,
+        now
+      );
+      console.log(`[SQLiteDatabaseStore] Official admin account verified and created: ${u.email}`);
+    } else if (existingAdmin) {
+      // Ensure the admin account has role = ADMIN and is active.
+      // CRITICAL: NEVER overwrite or reset an existing password_hash on server restart or DB init!
+      const needsStatusUpdate = existingAdmin.is_active !== 1 || existingAdmin.role !== 'ADMIN';
+      const needsPassword = !existingAdmin.password_hash;
 
-    // 6. Initial Delivery People (if not present)
-    const dpStmt = this.db.prepare(`
-      INSERT INTO delivery_people (
-        id, restaurant_id, user_id, name, phone, email,
-        is_active, is_available, delivery_fee_per_order, vehicle_type,
-        vehicle_plate_number, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    for (const dp of INITIAL_DELIVERY_PEOPLE) {
-      const existingDp = this.db.prepare('SELECT id FROM delivery_people WHERE id = ? OR user_id = ? LIMIT 1').get(dp.id, dp.userId);
-      if (!existingDp) {
-        dpStmt.run(
-          dp.id,
-          dp.restaurantId,
-          dp.userId,
-          dp.name,
-          dp.phone,
-          dp.email || null,
-          dp.isActive ? 1 : 0,
-          dp.isAvailable ? 1 : 0,
-          dp.deliveryFeePerOrder,
-          dp.vehicleType || 'توصيل',
-          dp.vehiclePlateNumber || null,
-          dp.createdAt,
-          dp.updatedAt
-        );
+      if (needsStatusUpdate || needsPassword) {
+        const passwordHash = existingAdmin.password_hash || await bcrypt.hash('Admin@123456', 10);
+        this.db.prepare(`
+          UPDATE users SET
+            password_hash = ?,
+            is_active = 1,
+            role = 'ADMIN',
+            updated_at = ?
+          WHERE id = ?
+        `).run(passwordHash, new Date().toISOString(), existingAdmin.id);
+        console.log(`[SQLiteDatabaseStore] Admin role/status verified for: ${existingAdmin.email}`);
       }
     }
   }
@@ -810,6 +753,17 @@ export class SQLiteDatabaseStore {
     };
   }
 
+  updateUserPassword(userId: string, newPasswordHash: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db.prepare(`
+      UPDATE users SET
+        password_hash = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).run(newPasswordHash, now, userId);
+    return result.changes > 0;
+  }
+
   // ==========================================
   // Orders Engine (SQLite Atomic Transaction)
   // ==========================================
@@ -937,12 +891,12 @@ export class SQLiteDatabaseStore {
         finalTotal,
         input.customerName.trim(),
         input.customerPhone.trim(),
-        input.wilaya.trim(),
+        input.wilaya?.trim() || zone.wilaya,
         input.daira?.trim() || null,
-        input.commune.trim(),
-        input.neighborhood.trim(),
-        input.address?.trim() || input.neighborhood.trim(),
-        input.address?.trim() || input.neighborhood.trim() || null,
+        input.commune?.trim() || zone.commune,
+        input.neighborhood?.trim() || input.address?.trim() || 'وسط المدينة',
+        input.address?.trim() || input.neighborhood?.trim() || 'العنوان الافتراضي',
+        input.address?.trim() || input.neighborhood?.trim() || null,
         input.notes?.trim() || null,
         input.idempotencyKey || null,
         now,

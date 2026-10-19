@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import { dbStore } from '../db/index.ts';
 import { FinancePeriod } from '../types/index.ts';
-import { orderEventsHub } from '../services/orderEventsHub.ts';
 
 // GET /api/admin/delivery-staff - جلب قائمة عمال التوصيل مع الإحصائيات
 export async function getAllDeliveryStaff(_req: Request, res: Response) {
@@ -147,9 +146,6 @@ export async function assignOrderToStaff(req: Request, res: Response) {
     const { deliveryPersonId } = req.body;
 
     const updatedOrder = dbStore.assignOrderToDeliveryPerson(id, deliveryPersonId || null);
-
-    // Realtime notification for Admin and Delivery driver
-    orderEventsHub.notifyOrderAssigned(updatedOrder);
 
     return res.json({
       success: true,

@@ -559,4 +559,24 @@ export const api = {
     }
     return json.data;
   },
+
+  async changePassword(
+    data: { currentPassword: string; newPassword: string; confirmPassword: string },
+    token: string
+  ): Promise<{ message: string }> {
+    const res = await fetch(`${BASE_URL}/auth/change-password`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(data),
+    });
+    const json: ApiResponse<null> = await res.json();
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || 'فشل في تغيير كلمة المرور');
+    }
+    return { message: json.message || 'تم تغيير كلمة المرور بنجاح' };
+  },
 };
+
